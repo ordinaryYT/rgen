@@ -14,64 +14,29 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-// ROLE THAT CAN USE /RESTOCK
 const RESTOCK_ROLE_ID = '1503761855460409485';
 
-// ACCOUNT STOCK
+// STOCK
 const stock = {
-    'alt': [],
-    '+30 days old': [],
-    '+1 year old': [],
-    '5+ years old': [],
-    'dump': []
+    alt: []
 };
 
-// REGISTER COMMANDS
-client.once('ready', async () => {
+// LIMIT PER AUTO RESTOCK CYCLE
+const RESTOCK_LIMIT = 10;
 
+// ---------- REGISTER COMMANDS ----------
+client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
 
     const commands = [
-
         new SlashCommandBuilder()
             .setName('gen')
-            .setDescription('Generate a Roblox account')
-            .addStringOption(option =>
-                option
-                    .setName('type')
-                    .setDescription('Account type')
-                    .setRequired(true)
-                    .addChoices(
-                        { name: 'Alt', value: 'alt' },
-                        { name: '30 Days Old', value: '+30 days old' },
-                        { name: '1 Year Old', value: '+1 year old' },
-                        { name: '5+ Years Old', value: '5+ years old' },
-                        { name: 'Dump', value: 'dump' }
-                    )
-            ),
+            .setDescription('Generate account'),
 
         new SlashCommandBuilder()
             .setName('stock')
-            .setDescription('View stock'),
-
-        new SlashCommandBuilder()
-            .setName('restock')
-            .setDescription('Generate 10 accounts')
-            .addStringOption(option =>
-                option
-                    .setName('type')
-                    .setDescription('Account type')
-                    .setRequired(true)
-                    .addChoices(
-                        { name: 'Alt', value: 'alt' },
-                        { name: '30 Days Old', value: '+30 days old' },
-                        { name: '1 Year Old', value: '+1 year old' },
-                        { name: '5+ Years Old', value: '5+ years old' },
-                        { name: 'Dump', value: 'dump' }
-                    )
-            )
-
-    ].map(cmd => cmd.toJSON());
+            .setDescription('Check stock')
+    ].map(c => c.toJSON());
 
     const rest = new REST({ version: '10' })
         .setToken(process.env.DISCORD_TOKEN);
@@ -81,122 +46,114 @@ client.once('ready', async () => {
         { body: commands }
     );
 
-    console.log('Slash commands registered');
+    console.log('Commands ready');
+
+    // START AUTO RESTOCK LOOP
+    autoRestockLoop();
 });
 
-// COMMAND HANDLER
+// ---------- AUTO RESTOCK ----------
+async function autoRestock() {
+
+    let success = 0;
+
+    for (let i = 0; i < RESTOCK_LIMIT; i++) {
+
+        try {
+
+            const res = await axios.post(
+                'https://core.bloxgen.net/api/generate',
+                {
+                    apiKey: process.env.BLOXGEN_API_KEY.trim(),
+                    type: 'alt'
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            const data = res.data;
+
+            if (!data.success) {
+                console.log('RESTOCK FAILED:', data.message);
+                continue;
+            }
+
+            stock.alt.push({
+                username: data.data.username,
+                password: data.data.password
+            });
+
+            success++;
+
+        } catch (err) {
+            console.log(err.response?.data || err.message);
+        }
+
+        // IMPORTANT: respect Free tier cooldown
+        await sleep(30 * 60 * 1000);
+    }
+
+    console.log(`Auto-restock complete: ${success}/${RESTOCK_LIMIT}`);
+}
+
+// LOOP EVERY 30 MINUTES
+function autoRestockLoop() {
+    autoRestock();
+
+    setInterval(() => {
+        autoRestock();
+    }, 30 * 60 * 1000);
+}
+
+// ---------- UTILS ----------
+function sleep(ms) {
+    return new Promise(res => setTimeout(res, ms));
+}
+
+// ---------- COMMANDS ----------
 client.on('interactionCreate', async (interaction) => {
 
     if (!interaction.isChatInputCommand()) return;
 
     // STOCK
     if (interaction.commandName === 'stock') {
-
         return interaction.reply({
-            content:
-                '```' +
-                '\n📦 BLOXGEN STOCK' +
-                '\n━━━━━━━━━━━━━━━━━━' +
-                `\nAlt: ${stock['alt'].length}` +
-                `\n30 Days Old: ${stock['+30 days old'].length}` +
-                `\n1 Year Old: ${stock['+1 year old'].length}` +
-                `\n5+ Years Old: ${stock['5+ years old'].length}` +
-                `\nDump: ${stock['dump'].length}` +
-                '\n━━━━━━━━━━━━━━━━━━' +
-                '```'
+            content: `📦 Stock: ${stock.alt.length}`,
+            ephemeral: true
         });
     }
 
-    // GENERATE
+    // GEN (NO COOLDOWN, UNLIMITED UNTIL EMPTY)
     if (interaction.commandName === 'gen') {
 
-        const type = interaction.options.getString('type');
-
-        if (stock[type].length <= 0) {
-
+        if (stock.alt.length === 0) {
             return interaction.reply({
-                content: `❌ ${type} stock empty.`,
+                content: '❌ Out of stock. Waiting for auto-restock.',
                 ephemeral: true
             });
         }
 
-        const acc = stock[type].shift();
+        const acc = stock.alt.shift();
 
         try {
-
             await interaction.user.send(
-                '```' +
-                `\nTYPE: ${type}` +
-                `\nUSERNAME: ${acc.username}` +
-                `\nPASSWORD: ${acc.password}` +
-                '\n```'
+                `USERNAME: ${acc.username}\nPASSWORD: ${acc.password}`
             );
 
             return interaction.reply({
-                content: '✅ Account sent to your DMs.',
+                content: '✅ Sent to DMs.',
                 ephemeral: true
             });
 
         } catch {
-
             return interaction.reply({
-                content: '❌ Enable DMs first.',
+                content: '❌ Enable DMs.',
                 ephemeral: true
             });
         }
-    }
-
-    // RESTOCK
-    if (interaction.commandName === 'restock') {
-
-        if (!interaction.member.roles.cache.has(RESTOCK_ROLE_ID)) {
-
-            return interaction.reply({
-                content: '❌ No permission.',
-                ephemeral: true
-            });
-        }
-
-        const type = interaction.options.getString('type');
-
-        await interaction.reply(
-            `🔄 Restocking ${type} accounts...`
-        );
-
-        let success = 0;
-
-        for (let i = 0; i < 10; i++) {
-
-            try {
-
-                const response = await axios.post(
-                    'https://core.bloxgen.net/api/generate',
-                    {
-                        apiKey: process.env.BLOXGEN_API_KEY,
-                        type: type
-                    }
-                );
-
-                const data = response.data;
-
-                stock[type].push({
-                    username: data.username,
-                    password: data.password
-                });
-
-                success++;
-
-            } catch (err) {
-
-                console.log(
-                    err.response?.data || err.message
-                );
-            }
-        }
-
-        interaction.editReply(
-            `✅ Added ${success} ${type} accounts to stock.`
-        );
     }
 });
 
