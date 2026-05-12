@@ -238,7 +238,7 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     // =========================
-    // STOCK
+    // STOCK COMMAND
     // =========================
 
     if (interaction.commandName === 'stock') {
@@ -263,7 +263,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     // =========================
-    // GEN
+    // GEN COMMAND
     // =========================
 
     if (interaction.commandName === 'gen') {
@@ -278,7 +278,7 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
-        // grab first account
+        // get account
         const acc = stock[type].shift();
 
         // remove from txt
@@ -289,39 +289,101 @@ client.on('interactionCreate', async interaction => {
                 ? '200 Day Old Account +'
                 : '5 Year Old Account +';
 
-        const embed = new EmbedBuilder()
-            .setTitle('✅ Account Generated')
-            .setDescription(
-
-                `## ${typeName}\n\n` +
-
-                `👤 **Username**\n` +
-                `\`${acc.username}\`\n\n` +
-
-                `🔑 **Password**\n` +
-                `\`${acc.password}\``
-
-            )
-            .setColor('Green')
-            .setFooter({
-                text: 'Enjoy'
-            });
-
         try {
 
-            await interaction.user.send({
+            // =========================
+            // CREATE PRIVATE CHANNEL
+            // =========================
+
+            const channel = await interaction.guild.channels.create({
+
+                name: `🎉・${interaction.user.username}`,
+
+                type: 0,
+
+                permissionOverwrites: [
+
+                    // hide from everyone
+                    {
+                        id: interaction.guild.roles.everyone.id,
+                        deny: ['ViewChannel']
+                    },
+
+                    // allow user
+                    {
+                        id: interaction.user.id,
+                        allow: [
+                            'ViewChannel',
+                            'SendMessages',
+                            'ReadMessageHistory'
+                        ]
+                    },
+
+                    // allow bot
+                    {
+                        id: client.user.id,
+                        allow: [
+                            'ViewChannel',
+                            'SendMessages',
+                            'ManageChannels',
+                            'ReadMessageHistory'
+                        ]
+                    }
+                ]
+            });
+
+            // =========================
+            // ACCOUNT EMBED
+            // =========================
+
+            const embed = new EmbedBuilder()
+
+                .setTitle('✅ Account Generated')
+
+                .setDescription(
+
+                    `## ${typeName}\n\n` +
+
+                    `👤 **Username**\n` +
+                    `\`${acc.username}\`\n\n` +
+
+                    `🔑 **Password**\n` +
+                    `\`${acc.password}\`\n\n` +
+
+                    `📌 Keep this account safe.`
+
+                )
+
+                .setColor('Green')
+
+                .setFooter({
+                    text: 'Generated Successfully'
+                });
+
+            // send account in channel
+            await channel.send({
+                content: `<@${interaction.user.id}>`,
                 embeds: [embed]
             });
 
+            // tell user where channel is
             return interaction.reply({
-                content: '✅ Account sent to your DMs.',
+
+                content:
+                    `✅ Your private account channel has been created: ${channel}`,
+
                 ephemeral: true
             });
 
-        } catch {
+        } catch (err) {
+
+            console.log(err);
 
             return interaction.reply({
-                content: '❌ Enable DMs first.',
+
+                content:
+                    '❌ Failed creating private channel.',
+
                 ephemeral: true
             });
         }
