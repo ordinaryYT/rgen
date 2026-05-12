@@ -15,7 +15,7 @@ const client = new Client({
 });
 
 // ROLE THAT CAN USE /RESTOCK
-const RESTOCK_ROLE_ID = 'PUT_ROLE_ID_HERE';
+const RESTOCK_ROLE_ID = '1503761855460409485';
 
 // ACCOUNT STOCK
 const stock = {
