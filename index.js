@@ -67,7 +67,7 @@ const STOCK_FILES = {
     "200day": "./200day.txt",
     "5year": "./5year.txt",
 
-    // quickgen cookies
+    // quickgen
     "200quick": "./200+plus quickgen.txt",
     "5quick": "./5 year+ quickgen.txt"
 };
@@ -113,10 +113,7 @@ function loadStock(type) {
 
             if (parts.length < 2) continue;
 
-            // =========================
             // QUICKGEN
-            // =========================
-
             if (type === '200quick' || type === '5quick') {
 
                 const cookie = parts[0].trim();
@@ -128,10 +125,7 @@ function loadStock(type) {
 
             } else {
 
-                // =========================
                 // NORMAL GEN
-                // =========================
-
                 const username = parts[0].trim();
                 const password = parts.slice(1).join(':').trim();
 
@@ -191,16 +185,14 @@ function removeUsedAccount(type, usedAccount) {
 }
 
 // =========================
-// REFRESH ALL STOCK
+// REFRESH STOCK
 // =========================
 
 function refreshAllStock() {
 
-    // normal gen
     loadStock('200day');
     loadStock('5year');
 
-    // quickgen
     loadStock('200quick');
     loadStock('5quick');
 }
@@ -238,11 +230,11 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(
                         {
-                            name: '200 Day Old Accounts +',
+                            name: '200 Day Old + Accounts',
                             value: '200day'
                         },
                         {
-                            name: '5 Year Old Accounts +',
+                            name: '5 Year Old + Accounts',
                             value: '5year'
                         }
                     )
@@ -254,7 +246,7 @@ client.once('ready', async () => {
 
         new SlashCommandBuilder()
             .setName('quickgen')
-            .setDescription('Generate cookie')
+            .setDescription('Generate account')
             .addStringOption(option =>
                 option
                     .setName('type')
@@ -262,11 +254,11 @@ client.once('ready', async () => {
                     .setRequired(true)
                     .addChoices(
                         {
-                            name: '200+ Plus Quickgen',
+                            name: '200 Day Old + Accounts',
                             value: '200quick'
                         },
                         {
-                            name: '5 Year+ Quickgen',
+                            name: '5 Year Old + Accounts',
                             value: '5quick'
                         }
                     )
@@ -312,20 +304,20 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'stock') {
 
         const embed = new EmbedBuilder()
-            .setTitle('📦 Current Stock')
+            .setTitle('Current Stock')
             .setDescription(
 
-                `## 200 Day Old Accounts +\n` +
-                `📁 ${stock["200day"].length} Accounts\n\n` +
+                `## 200 Day Old + Accounts\n` +
+                `${stock["200day"].length} Accounts\n\n` +
 
-                `## 5 Year Old Accounts +\n` +
-                `📁 ${stock["5year"].length} Accounts\n\n` +
+                `## 5 Year Old + Accounts\n` +
+                `${stock["5year"].length} Accounts\n\n` +
 
-                `## 200+ Plus Quickgen\n` +
-                `📁 ${stock["200quick"].length} Cookies\n\n` +
+                `## 200 Day Old + Quickgen\n` +
+                `${stock["200quick"].length} Accounts\n\n` +
 
-                `## 5 Year+ Quickgen\n` +
-                `📁 ${stock["5quick"].length} Cookies`
+                `## 5 Year Old + Quickgen\n` +
+                `${stock["5quick"].length} Accounts`
 
             )
             .setColor('Blue');
@@ -347,25 +339,22 @@ client.on('interactionCreate', async interaction => {
         if (stock[type].length === 0) {
 
             return interaction.reply({
-                content: '❌ Out of stock.',
+                content: 'Out of stock.',
                 ephemeral: true
             });
         }
 
-        // get account
         const acc = stock[type].shift();
 
-        // remove used
         removeUsedAccount(type, acc);
 
         const typeName =
             type === '200day'
-                ? '200 Day Old Account +'
-                : '5 Year Old Account +';
+                ? '200 Day Old + Account'
+                : '5 Year Old + Account';
 
         try {
 
-            // create channel
             const channel = await interaction.guild.channels.create({
 
                 name: `🎉・${interaction.user.username}`,
@@ -400,7 +389,6 @@ client.on('interactionCreate', async interaction => {
                 ]
             });
 
-            // embed
             const embed = new EmbedBuilder()
 
                 .setTitle('✅ Account Generated')
@@ -433,7 +421,7 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({
 
                 content:
-                    `✅ Your private account channel has been created: ${channel}`,
+                    `Your account has been created: ${channel}`,
 
                 ephemeral: true
             });
@@ -445,7 +433,7 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({
 
                 content:
-                    '❌ Failed creating private channel.',
+                    'Failed creating private channel.',
 
                 ephemeral: true
             });
@@ -463,25 +451,22 @@ client.on('interactionCreate', async interaction => {
         if (stock[type].length === 0) {
 
             return interaction.reply({
-                content: '❌ Out of stock.',
+                content: 'Out of stock.',
                 ephemeral: true
             });
         }
 
-        // get cookie
         const acc = stock[type].shift();
 
-        // remove used
         removeUsedAccount(type, acc);
 
         const typeName =
             type === '200quick'
-                ? '200+ Plus Quickgen'
-                : '5 Year+ Quickgen';
+                ? '200 Day Old + Account'
+                : '5 Year Old + Account';
 
         try {
 
-            // create channel
             const channel = await interaction.guild.channels.create({
 
                 name: `🍪・${interaction.user.username}`,
@@ -516,10 +501,9 @@ client.on('interactionCreate', async interaction => {
                 ]
             });
 
-            // embed
             const embed = new EmbedBuilder()
 
-                .setTitle('✅ Cookie Generated')
+                .setTitle('✅ Account Generated')
 
                 .setDescription(
 
@@ -528,7 +512,10 @@ client.on('interactionCreate', async interaction => {
                     `🍪 **Cookie**\n` +
                     `\`${acc.username}\`\n\n` +
 
-                    `📌 Keep this cookie safe.`
+                    `📌 Keep this account safe.\n\n` +
+
+                    `❓ **Need help? Look here**\n` +
+                    `https://discord.com/channels/1466562322947637475/1504054798868287608`
 
                 )
 
@@ -546,7 +533,7 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({
 
                 content:
-                    `✅ Your private cookie channel has been created: ${channel}`,
+                    `Your account has been created: ${channel}`,
 
                 ephemeral: true
             });
@@ -558,7 +545,7 @@ client.on('interactionCreate', async interaction => {
             return interaction.reply({
 
                 content:
-                    '❌ Failed creating private channel.',
+                    'Failed creating private channel.',
 
                 ephemeral: true
             });
