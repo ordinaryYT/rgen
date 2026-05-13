@@ -109,23 +109,27 @@ function loadStock(type) {
 
         for (const line of lines) {
 
-            const parts = line.split(':');
-
-            if (parts.length < 2) continue;
-
             // QUICKGEN
             if (type === '200quick' || type === '5quick') {
 
-                const cookie = parts[0].trim();
+                const splitIndex = line.indexOf(':');
+
+                if (splitIndex === -1) continue;
+
+                const beforeColon = line.slice(0, splitIndex).trim();
+                const afterColon = line.slice(splitIndex + 1).trim();
 
                 stock[type].push({
-                    username: cookie,
-                    password: parts.slice(1).join(':').trim()
+                    username: beforeColon,
+                    password: afterColon
                 });
 
             } else {
 
-                // NORMAL GEN
+                const parts = line.split(':');
+
+                if (parts.length < 2) continue;
+
                 const username = parts[0].trim();
                 const password = parts.slice(1).join(':').trim();
 
@@ -168,6 +172,14 @@ function removeUsedAccount(type, usedAccount) {
 
             const clean = line.trim();
 
+            // QUICKGEN
+            if (type === '200quick' || type === '5quick') {
+
+                return clean !== `${usedAccount.username}:${usedAccount.password}`;
+
+            }
+
+            // NORMAL GEN
             return clean !== `${usedAccount.username}:${usedAccount.password}`;
 
         });
@@ -510,7 +522,7 @@ client.on('interactionCreate', async interaction => {
                     `## ${typeName}\n\n` +
 
                     `🍪 **Cookie**\n` +
-                    `\`\`\`\n${acc.username}\n\`\`\`\n\n` +
+                    `\`\`\`\n${acc.username}/${acc.password}\n\`\`\`\n\n` +
 
                     `📌 Keep this account safe.\n\n` +
 
