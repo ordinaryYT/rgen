@@ -22,7 +22,7 @@ const client = new Client({
 });
 
 // =========================
-// RENDER WEB SERVER
+// WEB SERVER
 // =========================
 
 const app = express();
@@ -38,7 +38,7 @@ app.listen(PORT, () => {
 });
 
 // =========================
-// KEEP RENDER AWAKE
+// KEEP ALIVE
 // =========================
 
 setInterval(async () => {
@@ -62,17 +62,29 @@ setInterval(async () => {
 // =========================
 
 const STOCK_FILES = {
+
+    // normal accounts
     "200day": "./200day.txt",
-    "5year": "./5year.txt"
+    "5year": "./5year.txt",
+
+    // quickgen cookies
+    "200quick": "./200+plus quickgen.txt",
+    "5quick": "./5 year+ quickgen.txt"
 };
 
 // =========================
-// STOCK
+// STOCK CACHE
 // =========================
 
 const stock = {
+
+    // normal accounts
     "200day": [],
-    "5year": []
+    "5year": [],
+
+    // quickgen
+    "200quick": [],
+    "5quick": []
 };
 
 // =========================
@@ -101,13 +113,33 @@ function loadStock(type) {
 
             if (parts.length < 2) continue;
 
-            const username = parts[0].trim();
-            const password = parts.slice(1).join(':').trim();
+            // =========================
+            // QUICKGEN
+            // =========================
 
-            stock[type].push({
-                username,
-                password
-            });
+            if (type === '200quick' || type === '5quick') {
+
+                const cookie = parts[0].trim();
+
+                stock[type].push({
+                    username: cookie,
+                    password: parts.slice(1).join(':').trim()
+                });
+
+            } else {
+
+                // =========================
+                // NORMAL GEN
+                // =========================
+
+                const username = parts[0].trim();
+                const password = parts.slice(1).join(':').trim();
+
+                stock[type].push({
+                    username,
+                    password
+                });
+            }
         }
 
         console.log(
@@ -116,9 +148,8 @@ function loadStock(type) {
 
     } catch (err) {
 
-        console.log(
-            `Failed loading ${type} stock`
-        );
+        console.log(`Failed loading ${type}`);
+
     }
 }
 
@@ -160,13 +191,18 @@ function removeUsedAccount(type, usedAccount) {
 }
 
 // =========================
-// REFRESH STOCK
+// REFRESH ALL STOCK
 // =========================
 
 function refreshAllStock() {
 
+    // normal gen
     loadStock('200day');
     loadStock('5year');
+
+    // quickgen
+    loadStock('200quick');
+    loadStock('5quick');
 }
 
 // refresh every minute
@@ -188,6 +224,10 @@ client.once('ready', async () => {
 
     const commands = [
 
+        // =========================
+        // GEN
+        // =========================
+
         new SlashCommandBuilder()
             .setName('gen')
             .setDescription('Generate account')
@@ -207,6 +247,34 @@ client.once('ready', async () => {
                         }
                     )
             ),
+
+        // =========================
+        // QUICKGEN
+        // =========================
+
+        new SlashCommandBuilder()
+            .setName('quickgen')
+            .setDescription('Generate cookie')
+            .addStringOption(option =>
+                option
+                    .setName('type')
+                    .setDescription('Choose account type')
+                    .setRequired(true)
+                    .addChoices(
+                        {
+                            name: '200+ Plus Quickgen',
+                            value: '200quick'
+                        },
+                        {
+                            name: '5 Year+ Quickgen',
+                            value: '5quick'
+                        }
+                    )
+            ),
+
+        // =========================
+        // STOCK
+        // =========================
 
         new SlashCommandBuilder()
             .setName('stock')
@@ -230,7 +298,7 @@ client.once('ready', async () => {
 });
 
 // =========================
-// COMMANDS
+// COMMAND HANDLER
 // =========================
 
 client.on('interactionCreate', async interaction => {
@@ -251,7 +319,13 @@ client.on('interactionCreate', async interaction => {
                 `📁 ${stock["200day"].length} Accounts\n\n` +
 
                 `## 5 Year Old Accounts +\n` +
-                `📁 ${stock["5year"].length} Accounts`
+                `📁 ${stock["5year"].length} Accounts\n\n` +
+
+                `## 200+ Plus Quickgen\n` +
+                `📁 ${stock["200quick"].length} Cookies\n\n` +
+
+                `## 5 Year+ Quickgen\n` +
+                `📁 ${stock["5quick"].length} Cookies`
 
             )
             .setColor('Blue');
@@ -281,7 +355,7 @@ client.on('interactionCreate', async interaction => {
         // get account
         const acc = stock[type].shift();
 
-        // remove from txt
+        // remove used
         removeUsedAccount(type, acc);
 
         const typeName =
@@ -291,10 +365,7 @@ client.on('interactionCreate', async interaction => {
 
         try {
 
-            // =========================
-            // CREATE PRIVATE CHANNEL
-            // =========================
-
+            // create channel
             const channel = await interaction.guild.channels.create({
 
                 name: `🎉・${interaction.user.username}`,
@@ -303,13 +374,11 @@ client.on('interactionCreate', async interaction => {
 
                 permissionOverwrites: [
 
-                    // hide from everyone
                     {
                         id: interaction.guild.roles.everyone.id,
                         deny: ['ViewChannel']
                     },
 
-                    // allow user
                     {
                         id: interaction.user.id,
                         allow: [
@@ -319,7 +388,6 @@ client.on('interactionCreate', async interaction => {
                         ]
                     },
 
-                    // allow bot
                     {
                         id: client.user.id,
                         allow: [
@@ -332,10 +400,7 @@ client.on('interactionCreate', async interaction => {
                 ]
             });
 
-            // =========================
-            // ACCOUNT EMBED
-            // =========================
-
+            // embed
             const embed = new EmbedBuilder()
 
                 .setTitle('✅ Account Generated')
@@ -360,17 +425,128 @@ client.on('interactionCreate', async interaction => {
                     text: 'Generated Successfully'
                 });
 
-            // send account in channel
             await channel.send({
                 content: `<@${interaction.user.id}>`,
                 embeds: [embed]
             });
 
-            // tell user where channel is
             return interaction.reply({
 
                 content:
                     `✅ Your private account channel has been created: ${channel}`,
+
+                ephemeral: true
+            });
+
+        } catch (err) {
+
+            console.log(err);
+
+            return interaction.reply({
+
+                content:
+                    '❌ Failed creating private channel.',
+
+                ephemeral: true
+            });
+        }
+    }
+
+    // =========================
+    // QUICKGEN COMMAND
+    // =========================
+
+    if (interaction.commandName === 'quickgen') {
+
+        const type = interaction.options.getString('type');
+
+        if (stock[type].length === 0) {
+
+            return interaction.reply({
+                content: '❌ Out of stock.',
+                ephemeral: true
+            });
+        }
+
+        // get cookie
+        const acc = stock[type].shift();
+
+        // remove used
+        removeUsedAccount(type, acc);
+
+        const typeName =
+            type === '200quick'
+                ? '200+ Plus Quickgen'
+                : '5 Year+ Quickgen';
+
+        try {
+
+            // create channel
+            const channel = await interaction.guild.channels.create({
+
+                name: `🍪・${interaction.user.username}`,
+
+                type: 0,
+
+                permissionOverwrites: [
+
+                    {
+                        id: interaction.guild.roles.everyone.id,
+                        deny: ['ViewChannel']
+                    },
+
+                    {
+                        id: interaction.user.id,
+                        allow: [
+                            'ViewChannel',
+                            'SendMessages',
+                            'ReadMessageHistory'
+                        ]
+                    },
+
+                    {
+                        id: client.user.id,
+                        allow: [
+                            'ViewChannel',
+                            'SendMessages',
+                            'ManageChannels',
+                            'ReadMessageHistory'
+                        ]
+                    }
+                ]
+            });
+
+            // embed
+            const embed = new EmbedBuilder()
+
+                .setTitle('✅ Cookie Generated')
+
+                .setDescription(
+
+                    `## ${typeName}\n\n` +
+
+                    `🍪 **Cookie**\n` +
+                    `\`${acc.username}\`\n\n` +
+
+                    `📌 Keep this cookie safe.`
+
+                )
+
+                .setColor('Orange')
+
+                .setFooter({
+                    text: 'Generated Successfully'
+                });
+
+            await channel.send({
+                content: `<@${interaction.user.id}>`,
+                embeds: [embed]
+            });
+
+            return interaction.reply({
+
+                content:
+                    `✅ Your private cookie channel has been created: ${channel}`,
 
                 ephemeral: true
             });
