@@ -510,7 +510,7 @@ client.on('interactionCreate', async interaction => {
                     `## ${typeName}\n\n` +
 
                     `🍪 **Cookie**\n` +
-                    `\`${acc.username}\`\n\n` +
+                    `\`\`\`\n${acc.username}\n\`\`\`\n\n` +
 
                     `📌 Keep this account safe.\n\n` +
 
