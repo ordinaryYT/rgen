@@ -33,15 +33,6 @@ setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000)
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
-async function initDB() {
-    try {
-        await supabase.from('specific').select('*').limit(0);
-    } catch (e) {}
-    try {
-        await supabase.from('random').select('*').limit(0);
-    } catch (e) {}
-}
-
 async function importStock() {
     await supabase.from('specific').delete().neq('username', 'x');
     await supabase.from('random').delete().neq('username', 'x');
@@ -75,7 +66,6 @@ async function importStock() {
 
 client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
-    await initDB();
     await importStock();
 
     const commands = [
@@ -131,12 +121,28 @@ client.on('interactionCreate', async interaction => {
 
         if (isRandom) {
             const { data } = await supabase.from('random').select('*').limit(1);
-            acc = data && data[0] ? data[0] : null;
+            acc = data?.[0] || null;
             if (acc) await supabase.from('random').delete().eq('username', acc.username);
         } else {
-            const { data } = await supabase.from('specific').select('*').order('age', { ascending: true }).limit(1);
-            acc = data && data[0] ? data[0] : null;
-            if (acc) await supabase.from('specific').delete().eq('username', acc.username);
+            // Improved closest match - works even if far away
+            const { data: accounts } = await supabase
+                .from('specific')
+                .select('*');
+
+            if (accounts && accounts.length > 0) {
+                let closest = accounts[0];
+                let minDiff = Math.abs(accounts[0].age - requestedAge);
+
+                for (let account of accounts) {
+                    const diff = Math.abs(account.age - requestedAge);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        closest = account;
+                    }
+                }
+                acc = closest;
+                await supabase.from('specific').delete().eq('username', acc.username);
+            }
         }
 
         if (!acc) {
