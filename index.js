@@ -30,12 +30,13 @@ app.listen(process.env.PORT || 3000);
 
 setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000);
 
-// MongoDB Schema
+// MongoDB Schema - Added 'used' field
 const AccountSchema = new mongoose.Schema({
     username: String,
     password: String,
     age: Number,
-    type: String
+    type: String,
+    used: { type: Boolean, default: false } // Track if account was given out
 });
 
 const Account = mongoose.model('Account', AccountSchema);
@@ -43,9 +44,9 @@ const Account = mongoose.model('Account', AccountSchema);
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
 async function importStock() {
-    try {
-        await Account.deleteMany({});
-    } catch (e) {}
+    // Only delete accounts that haven't been used yet
+    // Keep used accounts for history/reference
+    await Account.deleteMany({ used: false });
 
     // specific.txt = username:age
     try {
@@ -54,10 +55,24 @@ async function importStock() {
             const t = line.trim();
             if (!t) return null;
             const [username, ageStr] = t.split(':');
-            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'specific' } : null;
+            return username ? { 
+                username: username.trim(), 
+                password: COMMON_PASSWORD, 
+                age: parseInt(ageStr) || 0, 
+                type: 'specific',
+                used: false 
+            } : null;
         }).filter(Boolean);
 
-        if (rows.length) await Account.insertMany(rows);
+        if (rows.length) {
+            // Check if account already exists before inserting
+            for (let row of rows) {
+                const exists = await Account.findOne({ username: row.username, used: false });
+                if (!exists) {
+                    await Account.create(row);
+                }
+            }
+        }
     } catch (e) {}
 
     // random.txt = username:age
@@ -67,17 +82,67 @@ async function importStock() {
             const t = line.trim();
             if (!t) return null;
             const [username, ageStr] = t.split(':');
-            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'random' } : null;
+            return username ? { 
+                username: username.trim(), 
+                password: COMMON_PASSWORD, 
+                age: parseInt(ageStr) || 0, 
+                type: 'random',
+                used: false 
+            } : null;
         }).filter(Boolean);
 
-        if (rows.length) await Account.insertMany(rows);
+        if (rows.length) {
+            for (let row of rows) {
+                const exists = await Account.findOne({ username: row.username, used: false });
+                if (!exists) {
+                    await Account.create(row);
+                }
+            }
+        }
     } catch (e) {}
+}
+
+// Get random account - only get unused ones
+async function getRandomAccount() {
+    const acc = await Account.findOne({ type: 'random', used: false });
+    if (acc) {
+        acc.used = true;
+        await acc.save();
+        return acc;
+    }
+    return null;
+}
+
+// Get specific account - only get unused ones
+async function getSpecificAccount(requestedAge) {
+    const accounts = await Account.find({ type: 'specific', used: false });
+    if (accounts.length === 0) return null;
+    
+    let closest = accounts[0];
+    let minDiff = Math.abs(accounts[0].age - requestedAge);
+    
+    for (let account of accounts) {
+        const diff = Math.abs(account.age - requestedAge);
+        if (diff < minDiff) {
+            minDiff = diff;
+            closest = account;
+        }
+    }
+    
+    closest.used = true;
+    await closest.save();
+    return closest;
+}
+
+// Check stock
+async function hasStock() {
+    const count = await Account.countDocuments({ used: false });
+    return count > 0;
 }
 
 client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
     
-    // Connect to MongoDB with working SSL settings
     try {
         await mongoose.connect(process.env.MONGODB_URI, {
             useNewUrlParser: true,
@@ -88,17 +153,29 @@ client.once('ready', async () => {
             socketTimeoutMS: 30000,
         });
         console.log('✅ Connected to MongoDB');
+        
+        // Clear out used accounts older than 7 days (optional)
+        // await Account.deleteMany({ used: true, updatedAt: { $lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } });
+        
         await importStock();
-        console.log('✅ Stock imported');
+        const available = await Account.countDocuments({ used: false });
+        console.log(`✅ Stock imported. ${available} accounts available.`);
     } catch (error) {
         console.log('❌ MongoDB error:', error.message);
-        // Keep bot running even if DB fails
     }
 
     const commands = [
         new SlashCommandBuilder()
             .setName('genpanel')
             .setDescription('Post the generator panel')
+            .setDefaultMemberPermissions(8),
+        new SlashCommandBuilder()
+            .setName('refreshstock')
+            .setDescription('Refresh stock from text files')
+            .setDefaultMemberPermissions(8),
+        new SlashCommandBuilder()
+            .setName('stock')
+            .setDescription('Check available stock')
             .setDefaultMemberPermissions(8)
     ].map(cmd => cmd.toJSON());
 
@@ -127,7 +204,33 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] });
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === 'refreshstock') {
+        await interaction.deferReply({ ephemeral: true });
+        await importStock();
+        const available = await Account.countDocuments({ used: false });
+        await interaction.editReply({ content: `✅ Stock refreshed! ${available} accounts available.` });
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'stock') {
+        await interaction.deferReply({ ephemeral: true });
+        const randomCount = await Account.countDocuments({ type: 'random', used: false });
+        const specificCount = await Account.countDocuments({ type: 'specific', used: false });
+        const total = randomCount + specificCount;
+        
+        await interaction.editReply({ 
+            content: `📊 Stock: ${total} total (${randomCount} random, ${specificCount} specific)` 
+        });
+    }
+
     if (interaction.isButton() && interaction.customId === 'generate_account') {
+        const available = await hasStock();
+        if (!available) {
+            return interaction.reply({
+                content: '❌ Out of stock! Use `/refreshstock` to reload.',
+                ephemeral: true
+            });
+        }
+
         const modal = new ModalBuilder()
             .setCustomId('age_modal')
             .setTitle('Request Account');
@@ -153,33 +256,16 @@ client.on('interactionCreate', async interaction => {
 
         try {
             if (isRandom) {
-                const data = await Account.findOne({ type: 'random' });
-                acc = data;
-                if (acc) await Account.deleteOne({ _id: acc._id });
+                acc = await getRandomAccount();
             } else {
-                const accounts = await Account.find({ type: 'specific' });
-
-                if (accounts && accounts.length > 0) {
-                    let closest = accounts[0];
-                    let minDiff = Math.abs(accounts[0].age - requestedAge);
-
-                    for (let account of accounts) {
-                        const diff = Math.abs(account.age - requestedAge);
-                        if (diff < minDiff) {
-                            minDiff = diff;
-                            closest = account;
-                        }
-                    }
-                    acc = closest;
-                    await Account.deleteOne({ _id: acc._id });
-                }
+                acc = await getSpecificAccount(requestedAge);
             }
         } catch (e) {
             console.log('Database error:', e.message);
         }
 
         if (!acc) {
-            return interaction.editReply({ content: 'Out of stock.' });
+            return interaction.editReply({ content: 'Out of stock. Use `/refreshstock` to reload.' });
         }
 
         try {
