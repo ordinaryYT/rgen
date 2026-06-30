@@ -43,7 +43,9 @@ const Account = mongoose.model('Account', AccountSchema);
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
 async function importStock() {
-    await Account.deleteMany({});
+    try {
+        await Account.deleteMany({});
+    } catch (e) {}
 
     // specific.txt = username:age
     try {
@@ -75,9 +77,23 @@ async function importStock() {
 client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
     
-    // Connect to MongoDB
-    await mongoose.connect(process.env.MONGODB_URI);
-    await importStock();
+    // Connect to MongoDB with working SSL settings
+    try {
+        await mongoose.connect(process.env.MONGODB_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+            tls: true,
+            tlsAllowInvalidCertificates: true,
+            serverSelectionTimeoutMS: 30000,
+            socketTimeoutMS: 30000,
+        });
+        console.log('✅ Connected to MongoDB');
+        await importStock();
+        console.log('✅ Stock imported');
+    } catch (error) {
+        console.log('❌ MongoDB error:', error.message);
+        // Keep bot running even if DB fails
+    }
 
     const commands = [
         new SlashCommandBuilder()
@@ -87,7 +103,12 @@ client.once('ready', async () => {
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+    try {
+        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+        console.log('✅ Commands registered');
+    } catch (e) {
+        console.log('❌ Command registration error:', e.message);
+    }
 });
 
 client.on('interactionCreate', async interaction => {
@@ -130,27 +151,31 @@ client.on('interactionCreate', async interaction => {
         let acc;
         let isRandom = isNaN(requestedAge);
 
-        if (isRandom) {
-            const data = await Account.findOne({ type: 'random' });
-            acc = data;
-            if (acc) await Account.deleteOne({ _id: acc._id });
-        } else {
-            const accounts = await Account.find({ type: 'specific' });
+        try {
+            if (isRandom) {
+                const data = await Account.findOne({ type: 'random' });
+                acc = data;
+                if (acc) await Account.deleteOne({ _id: acc._id });
+            } else {
+                const accounts = await Account.find({ type: 'specific' });
 
-            if (accounts && accounts.length > 0) {
-                let closest = accounts[0];
-                let minDiff = Math.abs(accounts[0].age - requestedAge);
+                if (accounts && accounts.length > 0) {
+                    let closest = accounts[0];
+                    let minDiff = Math.abs(accounts[0].age - requestedAge);
 
-                for (let account of accounts) {
-                    const diff = Math.abs(account.age - requestedAge);
-                    if (diff < minDiff) {
-                        minDiff = diff;
-                        closest = account;
+                    for (let account of accounts) {
+                        const diff = Math.abs(account.age - requestedAge);
+                        if (diff < minDiff) {
+                            minDiff = diff;
+                            closest = account;
+                        }
                     }
+                    acc = closest;
+                    await Account.deleteOne({ _id: acc._id });
                 }
-                acc = closest;
-                await Account.deleteOne({ _id: acc._id });
             }
+        } catch (e) {
+            console.log('Database error:', e.message);
         }
 
         if (!acc) {
