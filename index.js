@@ -44,73 +44,45 @@ const Account = mongoose.model('Account', AccountSchema);
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
 async function importStock() {
-    console.log('🔄 Importing stock...');
-
-    // specific.txt
+    // specific.txt = username:age
     try {
         const data = fs.readFileSync('./specific.txt', 'utf8');
         const rows = data.split('\n').map(line => {
             const t = line.trim();
             if (!t) return null;
             const [username, ageStr] = t.split(':');
-            return username ? { 
-                username: username.trim(), 
-                password: COMMON_PASSWORD, 
-                age: parseInt(ageStr) || 0, 
-                type: 'specific',
-                used: false 
-            } : null;
+            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'specific', used: false } : null;
         }).filter(Boolean);
 
-        let added = 0;
         if (rows.length) {
             for (let row of rows) {
                 const exists = await Account.findOne({ username: row.username });
                 if (!exists) {
                     await Account.create(row);
-                    added++;
                 }
             }
         }
-        console.log(`✅ Added ${added} new specific accounts`);
-    } catch (e) {
-        console.log('❌ Error reading specific.txt:', e.message);
-    }
+    } catch (e) {}
 
-    // random.txt
+    // random.txt = username:age
     try {
         const data = fs.readFileSync('./random.txt', 'utf8');
         const rows = data.split('\n').map(line => {
             const t = line.trim();
             if (!t) return null;
             const [username, ageStr] = t.split(':');
-            return username ? { 
-                username: username.trim(), 
-                password: COMMON_PASSWORD, 
-                age: parseInt(ageStr) || 0, 
-                type: 'random',
-                used: false 
-            } : null;
+            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'random', used: false } : null;
         }).filter(Boolean);
 
-        let added = 0;
         if (rows.length) {
             for (let row of rows) {
                 const exists = await Account.findOne({ username: row.username });
                 if (!exists) {
                     await Account.create(row);
-                    added++;
                 }
             }
         }
-        console.log(`✅ Added ${added} new random accounts`);
-    } catch (e) {
-        console.log('❌ Error reading random.txt:', e.message);
-    }
-
-    const available = await Account.countDocuments({ used: false });
-    const used = await Account.countDocuments({ used: true });
-    console.log(`📊 ${available} available, ${used} used accounts`);
+    } catch (e) {}
 }
 
 async function getRandomAccount() {
@@ -155,10 +127,10 @@ client.once('ready', async () => {
             serverSelectionTimeoutMS: 30000,
             socketTimeoutMS: 30000,
         });
-        console.log('✅ Connected to MongoDB');
+        console.log('Connected to MongoDB');
         await importStock();
     } catch (error) {
-        console.log('❌ MongoDB error:', error.message);
+        console.log('MongoDB error:', error.message);
     }
 
     const commands = [
@@ -171,9 +143,8 @@ client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Commands registered');
     } catch (e) {
-        console.log('❌ Command registration error:', e.message);
+        console.log('Command registration error:', e.message);
     }
 });
 
@@ -194,14 +165,6 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.isButton() && interaction.customId === 'generate_account') {
-        const available = await Account.countDocuments({ used: false });
-        if (available === 0) {
-            return interaction.reply({
-                content: '❌ Out of stock! Add more accounts to the text files and restart the bot.',
-                ephemeral: true
-            });
-        }
-
         const modal = new ModalBuilder()
             .setCustomId('age_modal')
             .setTitle('Request Account');
@@ -236,7 +199,7 @@ client.on('interactionCreate', async interaction => {
         }
 
         if (!acc) {
-            return interaction.editReply({ content: '❌ Out of stock. Add more accounts to the text files and restart the bot.' });
+            return interaction.editReply({ content: 'Out of stock.' });
         }
 
         try {
@@ -261,9 +224,9 @@ client.on('interactionCreate', async interaction => {
                 );
 
             await channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
-            await interaction.editReply({ content: `✅ Account sent to ${channel}` });
+            await interaction.editReply({ content: `Account sent to ${channel}` });
         } catch (err) {
-            await interaction.editReply({ content: '❌ Failed to create channel.' });
+            await interaction.editReply({ content: 'Failed to create channel.' });
         }
     }
 });
