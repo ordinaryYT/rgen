@@ -15,6 +15,7 @@ const {
     TextInputStyle
 } = require('discord.js');
 
+const fs = require('fs');
 const axios = require('axios');
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
@@ -29,42 +30,41 @@ app.listen(process.env.PORT || 3000);
 
 setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000);
 
-// Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
-// Create tables if not exist
+// Init DB
 async function initDB() {
-    await supabase.from('specific').select('count').limit(1).catch(() => {});
-    await supabase.from('random').select('count').limit(1).catch(() => {});
+    await supabase.from('specific').select('count', { count: 'exact', head: true }).catch(() => {});
+    await supabase.from('random').select('count', { count: 'exact', head: true }).catch(() => {});
 }
 
-// Import from TXT files
+// Import from TXT
 async function importStock() {
-    // Clear old
-    await supabase.from('specific').delete().neq('username', '0');
-    await supabase.from('random').delete().neq('username', '0');
+    await supabase.from('specific').delete().neq('username', '');
+    await supabase.from('random').delete().neq('username', '');
 
-    // Import specific
+    // specific.txt = username:age
     try {
         const data = fs.readFileSync('./specific.txt', 'utf8');
         const rows = data.split('\n').map(line => {
             const t = line.trim();
             if (!t) return null;
-            const [username, password, ageStr] = t.split(':');
-            return username && password ? { username: username.trim(), password: password.trim(), age: parseInt(ageStr) || 0 } : null;
+            const [username, ageStr] = t.split(':');
+            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0 } : null;
         }).filter(Boolean);
 
         if (rows.length) await supabase.from('specific').insert(rows);
     } catch (e) {}
 
-    // Import random
+    // random.txt = username:age
     try {
         const data = fs.readFileSync('./random.txt', 'utf8');
         const rows = data.split('\n').map(line => {
             const t = line.trim();
             if (!t) return null;
-            const [username, password] = t.split(':');
-            return username && password ? { username: username.trim(), password: password.trim() } : null;
+            const [username, ageStr] = t.split(':');
+            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0 } : null;
         }).filter(Boolean);
 
         if (rows.length) await supabase.from('random').insert(rows);
@@ -125,18 +125,19 @@ client.on('interactionCreate', async interaction => {
         const requestedAge = input ? parseInt(input) : NaN;
 
         let acc;
+        let isRandom = isNaN(requestedAge);
 
-        if (isNaN(requestedAge)) {
-            const { data } = await supabase.from('random').select('*').limit(1).order('username', { ascending: false }); // random-ish
-            acc = data && data[0] ? data[0] : null;
+        if (isRandom) {
+            const { data } = await supabase.from('random').select('*').limit(1).order('username');
+            acc = data?.[0] || null;
             if (acc) await supabase.from('random').delete().eq('username', acc.username);
         } else {
             const { data } = await supabase
                 .from('specific')
                 .select('*')
-                .order('age', { ascending: true, nullsFirst: false }) // simplistic closest
+                .order('age', { ascending: true })
                 .limit(1);
-            acc = data && data[0] ? data[0] : null;
+            acc = data?.[0] || null;
             if (acc) await supabase.from('specific').delete().eq('username', acc.username);
         }
 
@@ -161,8 +162,8 @@ client.on('interactionCreate', async interaction => {
                 .setDescription(
                     `**Username**\n\`${acc.username}\`\n\n` +
                     `**Password**\n\`${acc.password}\`\n\n` +
-                    `**Account Age**\n${acc.age ? acc.age + ' days' : 'Random'}\n\n` +
-                    `**Requested**\n${isNaN(requestedAge) ? 'Random' : requestedAge + ' days'}`
+                    `**Account Age**\n${acc.age} days\n\n` +
+                    `**Requested**\n${isRandom ? 'Random' : requestedAge + ' days'}`
                 );
 
             await channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
