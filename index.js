@@ -18,7 +18,7 @@ const {
 const fs = require('fs');
 const axios = require('axios');
 const express = require('express');
-const { createClient } = require('@supabase/supabase-js');
+const mongoose = require('mongoose');
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
@@ -30,12 +30,20 @@ app.listen(process.env.PORT || 3000);
 
 setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000);
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+// MongoDB Schema
+const AccountSchema = new mongoose.Schema({
+    username: String,
+    password: String,
+    age: Number,
+    type: String
+});
+
+const Account = mongoose.model('Account', AccountSchema);
+
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
 async function importStock() {
-    await supabase.from('specific').delete().neq('username', 'x');
-    await supabase.from('random').delete().neq('username', 'x');
+    await Account.deleteMany({});
 
     // specific.txt = username:age
     try {
@@ -44,10 +52,10 @@ async function importStock() {
             const t = line.trim();
             if (!t) return null;
             const [username, ageStr] = t.split(':');
-            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0 } : null;
+            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'specific' } : null;
         }).filter(Boolean);
 
-        if (rows.length) await supabase.from('specific').insert(rows);
+        if (rows.length) await Account.insertMany(rows);
     } catch (e) {}
 
     // random.txt = username:age
@@ -57,15 +65,18 @@ async function importStock() {
             const t = line.trim();
             if (!t) return null;
             const [username, ageStr] = t.split(':');
-            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0 } : null;
+            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'random' } : null;
         }).filter(Boolean);
 
-        if (rows.length) await supabase.from('random').insert(rows);
+        if (rows.length) await Account.insertMany(rows);
     } catch (e) {}
 }
 
 client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
+    
+    // Connect to MongoDB
+    await mongoose.connect(process.env.MONGODB_URI);
     await importStock();
 
     const commands = [
@@ -120,14 +131,11 @@ client.on('interactionCreate', async interaction => {
         let isRandom = isNaN(requestedAge);
 
         if (isRandom) {
-            const { data } = await supabase.from('random').select('*').limit(1);
-            acc = data?.[0] || null;
-            if (acc) await supabase.from('random').delete().eq('username', acc.username);
+            const data = await Account.findOne({ type: 'random' });
+            acc = data;
+            if (acc) await Account.deleteOne({ _id: acc._id });
         } else {
-            // Improved closest match - works even if far away
-            const { data: accounts } = await supabase
-                .from('specific')
-                .select('*');
+            const accounts = await Account.find({ type: 'specific' });
 
             if (accounts && accounts.length > 0) {
                 let closest = accounts[0];
@@ -141,7 +149,7 @@ client.on('interactionCreate', async interaction => {
                     }
                 }
                 acc = closest;
-                await supabase.from('specific').delete().eq('username', acc.username);
+                await Account.deleteOne({ _id: acc._id });
             }
         }
 
