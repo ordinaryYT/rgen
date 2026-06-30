@@ -33,16 +33,18 @@ setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000)
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
-// Init DB
 async function initDB() {
-    await supabase.from('specific').select('count', { count: 'exact', head: true }).catch(() => {});
-    await supabase.from('random').select('count', { count: 'exact', head: true }).catch(() => {});
+    try {
+        await supabase.from('specific').select('*').limit(0);
+    } catch (e) {}
+    try {
+        await supabase.from('random').select('*').limit(0);
+    } catch (e) {}
 }
 
-// Import from TXT
 async function importStock() {
-    await supabase.from('specific').delete().neq('username', '');
-    await supabase.from('random').delete().neq('username', '');
+    await supabase.from('specific').delete().neq('username', 'x');
+    await supabase.from('random').delete().neq('username', 'x');
 
     // specific.txt = username:age
     try {
@@ -128,16 +130,12 @@ client.on('interactionCreate', async interaction => {
         let isRandom = isNaN(requestedAge);
 
         if (isRandom) {
-            const { data } = await supabase.from('random').select('*').limit(1).order('username');
-            acc = data?.[0] || null;
+            const { data } = await supabase.from('random').select('*').limit(1);
+            acc = data && data[0] ? data[0] : null;
             if (acc) await supabase.from('random').delete().eq('username', acc.username);
         } else {
-            const { data } = await supabase
-                .from('specific')
-                .select('*')
-                .order('age', { ascending: true })
-                .limit(1);
-            acc = data?.[0] || null;
+            const { data } = await supabase.from('specific').select('*').order('age', { ascending: true }).limit(1);
+            acc = data && data[0] ? data[0] : null;
             if (acc) await supabase.from('specific').delete().eq('username', acc.username);
         }
 
