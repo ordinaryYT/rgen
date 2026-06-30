@@ -6,567 +6,181 @@ const {
     SlashCommandBuilder,
     REST,
     Routes,
-    EmbedBuilder
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } = require('discord.js');
 
+const fs = require('fs');
 const axios = require('axios');
 const express = require('express');
-const fs = require('fs');
-
-// =========================
-// DISCORD CLIENT
-// =========================
+const Database = require('better-sqlite3');
 
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
 });
-
-// =========================
-// WEB SERVER
-// =========================
 
 const app = express();
+app.get('/', (req, res) => res.send('Bot Online'));
+app.listen(process.env.PORT || 3000);
 
-app.get('/', (req, res) => {
-    res.send('Bot Online');
-});
+setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000);
 
-const PORT = process.env.PORT || 3000;
+// Database
+const db = new Database('./stock.db');
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+db.exec(`
+    CREATE TABLE IF NOT EXISTS specific (
+        username TEXT PRIMARY KEY,
+        password TEXT,
+        age INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS random (
+        username TEXT PRIMARY KEY,
+        password TEXT
+    );
+`);
 
-// =========================
-// KEEP ALIVE
-// =========================
-
-setInterval(async () => {
-
-    try {
-
-        await axios.get('https://rgen.onrender.com');
-
-        console.log('Keepalive ping sent');
-
-    } catch (err) {
-
-        console.log('Keepalive failed');
-
-    }
-
-}, 60 * 1000);
-
-// =========================
-// STOCK FILES
-// =========================
-
-const STOCK_FILES = {
-
-    // normal accounts
-    "200day": "./200day.txt",
-    "5year": "./5year.txt",
-
-    // quickgen
-    "200quick": "./200+plus quickgen.txt",
-    "5quick": "./5 year+ quickgen.txt"
-};
-
-// =========================
-// STOCK CACHE
-// =========================
-
-const stock = {
-
-    // normal accounts
-    "200day": [],
-    "5year": [],
-
-    // quickgen
-    "200quick": [],
-    "5quick": []
-};
-
-// =========================
-// LOAD STOCK
-// =========================
-
-function loadStock(type) {
+function importStock() {
+    db.prepare('DELETE FROM specific').run();
+    db.prepare('DELETE FROM random').run();
 
     try {
-
-        const file = fs.readFileSync(
-            STOCK_FILES[type],
-            'utf8'
-        );
-
-        const lines = file
-            .split('\n')
-            .map(x => x.trim())
-            .filter(Boolean);
-
-        stock[type] = [];
-
-        for (const line of lines) {
-
-            // QUICKGEN
-            if (type === '200quick' || type === '5quick') {
-
-                const splitIndex = line.indexOf(':');
-
-                if (splitIndex === -1) continue;
-
-                const beforeColon = line.slice(0, splitIndex).trim();
-                const afterColon = line.slice(splitIndex + 1).trim();
-
-                stock[type].push({
-                    username: beforeColon,
-                    password: afterColon
-                });
-
-            } else {
-
-                const parts = line.split(':');
-
-                if (parts.length < 2) continue;
-
-                const username = parts[0].trim();
-                const password = parts.slice(1).join(':').trim();
-
-                stock[type].push({
-                    username,
-                    password
-                });
-            }
-        }
-
-        console.log(
-            `${type} stock loaded: ${stock[type].length}`
-        );
-
-    } catch (err) {
-
-        console.log(`Failed loading ${type}`);
-
-    }
-}
-
-// =========================
-// REMOVE USED ACCOUNT
-// =========================
-
-function removeUsedAccount(type, usedAccount) {
-
-    try {
-
-        const file = fs.readFileSync(
-            STOCK_FILES[type],
-            'utf8'
-        );
-
-        const lines = file
-            .split('\n')
-            .filter(Boolean);
-
-        const updated = lines.filter(line => {
-
-            const clean = line.trim();
-
-            // QUICKGEN
-            if (type === '200quick' || type === '5quick') {
-
-                return clean !== `${usedAccount.username}:${usedAccount.password}`;
-
-            }
-
-            // NORMAL GEN
-            return clean !== `${usedAccount.username}:${usedAccount.password}`;
-
+        const data = fs.readFileSync('./specific.txt', 'utf8');
+        const stmt = db.prepare('INSERT INTO specific (username, password, age) VALUES (?, ?, ?)');
+        data.split('\n').forEach(line => {
+            const t = line.trim();
+            if (!t) return;
+            const [u, p, a] = t.split(':');
+            if (u && p) stmt.run(u.trim(), p.trim(), parseInt(a) || 0);
         });
+    } catch (e) {}
 
-        fs.writeFileSync(
-            STOCK_FILES[type],
-            updated.join('\n')
-        );
-
-    } catch (err) {
-
-        console.log('Failed updating txt file');
-
-    }
+    try {
+        const data = fs.readFileSync('./random.txt', 'utf8');
+        const stmt = db.prepare('INSERT INTO random (username, password) VALUES (?, ?)');
+        data.split('\n').forEach(line => {
+            const t = line.trim();
+            if (!t) return;
+            const [u, p] = t.split(':');
+            if (u && p) stmt.run(u.trim(), p.trim());
+        });
+    } catch (e) {}
 }
 
-// =========================
-// REFRESH STOCK
-// =========================
-
-function refreshAllStock() {
-
-    loadStock('200day');
-    loadStock('5year');
-
-    loadStock('200quick');
-    loadStock('5quick');
+function removeAccount(type, username) {
+    const table = type === 'specific' ? 'specific' : 'random';
+    db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(username);
 }
 
-// refresh every minute
-setInterval(() => {
+function findClosestSpecific(requestedAge) {
+    const acc = db.prepare('SELECT * FROM specific ORDER BY ABS(age - ?) ASC LIMIT 1').get(requestedAge);
+    if (acc) removeAccount('specific', acc.username);
+    return acc;
+}
 
-    refreshAllStock();
+function getRandomAccount() {
+    const acc = db.prepare('SELECT * FROM random ORDER BY RANDOM() LIMIT 1').get();
+    if (acc) removeAccount('random', acc.username);
+    return acc;
+}
 
-}, 60 * 1000);
-
-// =========================
-// READY EVENT
-// =========================
-
+// Ready
 client.once('ready', async () => {
-
     console.log(`${client.user.tag} online`);
-
-    refreshAllStock();
+    importStock();
 
     const commands = [
-
-        // =========================
-        // GEN
-        // =========================
-
         new SlashCommandBuilder()
-            .setName('gen')
-            .setDescription('Generate account')
-            .addStringOption(option =>
-                option
-                    .setName('type')
-                    .setDescription('Choose account type')
-                    .setRequired(true)
-                    .addChoices(
-                        {
-                            name: '200 Day Old + Accounts',
-                            value: '200day'
-                        },
-                        {
-                            name: '5 Year Old + Accounts',
-                            value: '5year'
-                        }
-                    )
-            ),
-
-        // =========================
-        // QUICKGEN
-        // =========================
-
-        new SlashCommandBuilder()
-            .setName('quickgen')
-            .setDescription('Generate account')
-            .addStringOption(option =>
-                option
-                    .setName('type')
-                    .setDescription('Choose account type')
-                    .setRequired(true)
-                    .addChoices(
-                        {
-                            name: '200 Day Old + Accounts',
-                            value: '200quick'
-                        },
-                        {
-                            name: '5 Year Old + Accounts',
-                            value: '5quick'
-                        }
-                    )
-            ),
-
-        // =========================
-        // STOCK
-        // =========================
-
-        new SlashCommandBuilder()
-            .setName('stock')
-            .setDescription('Check stock')
-
+            .setName('genpanel')
+            .setDescription('Post the generator panel')
+            .setDefaultMemberPermissions(8)
     ].map(cmd => cmd.toJSON());
 
-    const rest = new REST({
-        version: '10'
-    }).setToken(process.env.DISCORD_TOKEN);
-
-    await rest.put(
-        Routes.applicationCommands(client.user.id),
-        {
-            body: commands
-        }
-    );
-
-    console.log('Commands registered');
-
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
 });
 
-// =========================
-// COMMAND HANDLER
-// =========================
-
+// Interactions
 client.on('interactionCreate', async interaction => {
-
-    if (!interaction.isChatInputCommand()) return;
-
-    // =========================
-    // STOCK COMMAND
-    // =========================
-
-    if (interaction.commandName === 'stock') {
-
+    if (interaction.isChatInputCommand() && interaction.commandName === 'genpanel') {
         const embed = new EmbedBuilder()
-            .setTitle('Current Stock')
-            .setDescription(
+            .setTitle('Roblox Account Generator')
+            .setDescription('Click the button to generate an account')
+            .setColor('Blurple');
 
-                `## 200 Day Old + Accounts\n` +
-                `${stock["200day"].length} Accounts\n\n` +
+        const button = new ButtonBuilder()
+            .setCustomId('generate_account')
+            .setLabel('Generate Account')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🔑');
 
-                `## 5 Year Old + Accounts\n` +
-                `${stock["5year"].length} Accounts\n\n` +
-
-                `## 200 Day Old + Quickgen\n` +
-                `${stock["200quick"].length} Accounts\n\n` +
-
-                `## 5 Year Old + Quickgen\n` +
-                `${stock["5quick"].length} Accounts`
-
-            )
-            .setColor('Blue');
-
-        return interaction.reply({
+        await interaction.reply({
             embeds: [embed],
-            ephemeral: true
+            components: [new ActionRowBuilder().addComponents(button)]
         });
     }
 
-    // =========================
-    // GEN COMMAND
-    // =========================
+    if (interaction.isButton() && interaction.customId === 'generate_account') {
+        const modal = new ModalBuilder()
+            .setCustomId('age_modal')
+            .setTitle('Request Account');
 
-    if (interaction.commandName === 'gen') {
+        const input = new TextInputBuilder()
+            .setCustomId('requested_age')
+            .setLabel('Desired Age in Days')
+            .setPlaceholder('Leave blank for random')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false);
 
-        const type = interaction.options.getString('type');
-
-        if (stock[type].length === 0) {
-
-            return interaction.reply({
-                content: 'Out of stock.',
-                ephemeral: true
-            });
-        }
-
-        const acc = stock[type].shift();
-
-        removeUsedAccount(type, acc);
-
-        const typeName =
-            type === '200day'
-                ? '200 Day Old + Account'
-                : '5 Year Old + Account';
-
-        try {
-
-            const channel = await interaction.guild.channels.create({
-
-                name: `🎉・${interaction.user.username}`,
-
-                type: 0,
-
-                permissionOverwrites: [
-
-                    {
-                        id: interaction.guild.roles.everyone.id,
-                        deny: ['ViewChannel']
-                    },
-
-                    {
-                        id: interaction.user.id,
-                        allow: [
-                            'ViewChannel',
-                            'SendMessages',
-                            'ReadMessageHistory'
-                        ]
-                    },
-
-                    {
-                        id: client.user.id,
-                        allow: [
-                            'ViewChannel',
-                            'SendMessages',
-                            'ManageChannels',
-                            'ReadMessageHistory'
-                        ]
-                    }
-                ]
-            });
-
-            const embed = new EmbedBuilder()
-
-                .setTitle('✅ Account Generated')
-
-                .setDescription(
-
-                    `## ${typeName}\n\n` +
-
-                    `👤 **Username**\n` +
-                    `\`${acc.username}\`\n\n` +
-
-                    `🔑 **Password**\n` +
-                    `\`${acc.password}\`\n\n` +
-
-                    `📌 Keep this account safe.`
-
-                )
-
-                .setColor('Green')
-
-                .setFooter({
-                    text: 'Generated Successfully'
-                });
-
-            await channel.send({
-                content: `<@${interaction.user.id}>`,
-                embeds: [embed]
-            });
-
-            return interaction.reply({
-
-                content:
-                    `Your account has been created: ${channel}`,
-
-                ephemeral: true
-            });
-
-        } catch (err) {
-
-            console.log(err);
-
-            return interaction.reply({
-
-                content:
-                    'Failed creating private channel.',
-
-                ephemeral: true
-            });
-        }
+        await interaction.showModal(modal.addComponents(new ActionRowBuilder().addComponents(input)));
     }
 
-    // =========================
-    // QUICKGEN COMMAND
-    // =========================
+    if (interaction.isModalSubmit() && interaction.customId === 'age_modal') {
+        await interaction.deferReply({ ephemeral: true });
 
-    if (interaction.commandName === 'quickgen') {
+        const input = interaction.fields.getTextInputValue('requested_age').trim();
+        const requestedAge = input ? parseInt(input) : NaN;
 
-        const type = interaction.options.getString('type');
+        const acc = isNaN(requestedAge) ? getRandomAccount() : findClosestSpecific(requestedAge);
 
-        if (stock[type].length === 0) {
-
-            return interaction.reply({
-                content: 'Out of stock.',
-                ephemeral: true
-            });
+        if (!acc) {
+            return interaction.editReply({ content: 'Out of stock.' });
         }
 
-        const acc = stock[type].shift();
-
-        removeUsedAccount(type, acc);
-
-        const typeName =
-            type === '200quick'
-                ? '200 Day Old + Account'
-                : '5 Year Old + Account';
-
         try {
-
             const channel = await interaction.guild.channels.create({
-
-                name: `🍪・${interaction.user.username}`,
-
+                name: `🎉・${interaction.user.username}`,
                 type: 0,
-
                 permissionOverwrites: [
-
-                    {
-                        id: interaction.guild.roles.everyone.id,
-                        deny: ['ViewChannel']
-                    },
-
-                    {
-                        id: interaction.user.id,
-                        allow: [
-                            'ViewChannel',
-                            'SendMessages',
-                            'ReadMessageHistory'
-                        ]
-                    },
-
-                    {
-                        id: client.user.id,
-                        allow: [
-                            'ViewChannel',
-                            'SendMessages',
-                            'ManageChannels',
-                            'ReadMessageHistory'
-                        ]
-                    }
+                    { id: interaction.guild.roles.everyone.id, deny: ['ViewChannel'] },
+                    { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+                    { id: client.user.id, allow: ['ViewChannel', 'SendMessages', 'ManageChannels', 'ReadMessageHistory'] }
                 ]
             });
 
             const embed = new EmbedBuilder()
-
-                .setTitle('✅ Account Generated')
-
+                .setTitle('Account Generated')
+                .setColor('Green')
                 .setDescription(
+                    `**Username**\n\`${acc.username}\`\n\n` +
+                    `**Password**\n\`${acc.password}\`\n\n` +
+                    `**Account Age**\n${acc.age ? acc.age + ' days' : 'Random'}\n\n` +
+                    `**Requested**\n${isNaN(requestedAge) ? 'Random' : requestedAge + ' days'}`
+                );
 
-                    `## ${typeName}\n\n` +
+            await channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
 
-                    `🍪 **Cookie**\n` +
-                    `\`\`\`\n${acc.username}/${acc.password}\n\`\`\`\n\n` +
-
-                    `📌 Keep this account safe.\n\n` +
-
-                    `❓ **Need help? Look here**\n` +
-                    `https://discord.com/channels/1466562322947637475/1504054798868287608`
-
-                )
-
-                .setColor('Orange')
-
-                .setFooter({
-                    text: 'Generated Successfully'
-                });
-
-            await channel.send({
-                content: `<@${interaction.user.id}>`,
-                embeds: [embed]
-            });
-
-            return interaction.reply({
-
-                content:
-                    `Your account has been created: ${channel}`,
-
-                ephemeral: true
-            });
+            await interaction.editReply({ content: `Account sent to ${channel}` });
 
         } catch (err) {
-
-            console.log(err);
-
-            return interaction.reply({
-
-                content:
-                    'Failed creating private channel.',
-
-                ephemeral: true
-            });
+            await interaction.editReply({ content: 'Failed to create channel.' });
         }
     }
 });
-
-// =========================
-// LOGIN
-// =========================
 
 client.login(process.env.DISCORD_TOKEN);
