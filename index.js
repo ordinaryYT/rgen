@@ -15,10 +15,9 @@ const {
     TextInputStyle
 } = require('discord.js');
 
-const fs = require('fs');
 const axios = require('axios');
 const express = require('express');
-const Database = require('better-sqlite3');
+const { createClient } = require('@supabase/supabase-js');
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
@@ -30,69 +29,52 @@ app.listen(process.env.PORT || 3000);
 
 setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000);
 
-// Database
-const db = new Database('./stock.db');
+// Supabase
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-db.exec(`
-    CREATE TABLE IF NOT EXISTS specific (
-        username TEXT PRIMARY KEY,
-        password TEXT,
-        age INTEGER
-    );
-    CREATE TABLE IF NOT EXISTS random (
-        username TEXT PRIMARY KEY,
-        password TEXT
-    );
-`);
+// Create tables if not exist
+async function initDB() {
+    await supabase.from('specific').select('count').limit(1).catch(() => {});
+    await supabase.from('random').select('count').limit(1).catch(() => {});
+}
 
-function importStock() {
-    db.prepare('DELETE FROM specific').run();
-    db.prepare('DELETE FROM random').run();
+// Import from TXT files
+async function importStock() {
+    // Clear old
+    await supabase.from('specific').delete().neq('username', '0');
+    await supabase.from('random').delete().neq('username', '0');
 
+    // Import specific
     try {
         const data = fs.readFileSync('./specific.txt', 'utf8');
-        const stmt = db.prepare('INSERT INTO specific (username, password, age) VALUES (?, ?, ?)');
-        data.split('\n').forEach(line => {
+        const rows = data.split('\n').map(line => {
             const t = line.trim();
-            if (!t) return;
-            const [u, p, a] = t.split(':');
-            if (u && p) stmt.run(u.trim(), p.trim(), parseInt(a) || 0);
-        });
+            if (!t) return null;
+            const [username, password, ageStr] = t.split(':');
+            return username && password ? { username: username.trim(), password: password.trim(), age: parseInt(ageStr) || 0 } : null;
+        }).filter(Boolean);
+
+        if (rows.length) await supabase.from('specific').insert(rows);
     } catch (e) {}
 
+    // Import random
     try {
         const data = fs.readFileSync('./random.txt', 'utf8');
-        const stmt = db.prepare('INSERT INTO random (username, password) VALUES (?, ?)');
-        data.split('\n').forEach(line => {
+        const rows = data.split('\n').map(line => {
             const t = line.trim();
-            if (!t) return;
-            const [u, p] = t.split(':');
-            if (u && p) stmt.run(u.trim(), p.trim());
-        });
+            if (!t) return null;
+            const [username, password] = t.split(':');
+            return username && password ? { username: username.trim(), password: password.trim() } : null;
+        }).filter(Boolean);
+
+        if (rows.length) await supabase.from('random').insert(rows);
     } catch (e) {}
 }
 
-function removeAccount(type, username) {
-    const table = type === 'specific' ? 'specific' : 'random';
-    db.prepare(`DELETE FROM ${table} WHERE username = ?`).run(username);
-}
-
-function findClosestSpecific(requestedAge) {
-    const acc = db.prepare('SELECT * FROM specific ORDER BY ABS(age - ?) ASC LIMIT 1').get(requestedAge);
-    if (acc) removeAccount('specific', acc.username);
-    return acc;
-}
-
-function getRandomAccount() {
-    const acc = db.prepare('SELECT * FROM random ORDER BY RANDOM() LIMIT 1').get();
-    if (acc) removeAccount('random', acc.username);
-    return acc;
-}
-
-// Ready
 client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
-    importStock();
+    await initDB();
+    await importStock();
 
     const commands = [
         new SlashCommandBuilder()
@@ -105,7 +87,6 @@ client.once('ready', async () => {
     await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
 });
 
-// Interactions
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand() && interaction.commandName === 'genpanel') {
         const embed = new EmbedBuilder()
@@ -119,10 +100,7 @@ client.on('interactionCreate', async interaction => {
             .setStyle(ButtonStyle.Primary)
             .setEmoji('🔑');
 
-        await interaction.reply({
-            embeds: [embed],
-            components: [new ActionRowBuilder().addComponents(button)]
-        });
+        await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] });
     }
 
     if (interaction.isButton() && interaction.customId === 'generate_account') {
@@ -146,7 +124,21 @@ client.on('interactionCreate', async interaction => {
         const input = interaction.fields.getTextInputValue('requested_age').trim();
         const requestedAge = input ? parseInt(input) : NaN;
 
-        const acc = isNaN(requestedAge) ? getRandomAccount() : findClosestSpecific(requestedAge);
+        let acc;
+
+        if (isNaN(requestedAge)) {
+            const { data } = await supabase.from('random').select('*').limit(1).order('username', { ascending: false }); // random-ish
+            acc = data && data[0] ? data[0] : null;
+            if (acc) await supabase.from('random').delete().eq('username', acc.username);
+        } else {
+            const { data } = await supabase
+                .from('specific')
+                .select('*')
+                .order('age', { ascending: true, nullsFirst: false }) // simplistic closest
+                .limit(1);
+            acc = data && data[0] ? data[0] : null;
+            if (acc) await supabase.from('specific').delete().eq('username', acc.username);
+        }
 
         if (!acc) {
             return interaction.editReply({ content: 'Out of stock.' });
@@ -174,9 +166,7 @@ client.on('interactionCreate', async interaction => {
                 );
 
             await channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
-
             await interaction.editReply({ content: `Account sent to ${channel}` });
-
         } catch (err) {
             await interaction.editReply({ content: 'Failed to create channel.' });
         }
