@@ -30,13 +30,13 @@ app.listen(process.env.PORT || 3000);
 
 setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000);
 
-// MongoDB Schema - Added 'used' field
+// MongoDB Schema
 const AccountSchema = new mongoose.Schema({
     username: String,
     password: String,
     age: Number,
     type: String,
-    used: { type: Boolean, default: false } // Track if account was given out
+    used: { type: Boolean, default: false }
 });
 
 const Account = mongoose.model('Account', AccountSchema);
@@ -44,11 +44,9 @@ const Account = mongoose.model('Account', AccountSchema);
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
 
 async function importStock() {
-    // Only delete accounts that haven't been used yet
-    // Keep used accounts for history/reference
-    await Account.deleteMany({ used: false });
+    console.log('🔄 Importing stock...');
 
-    // specific.txt = username:age
+    // specific.txt
     try {
         const data = fs.readFileSync('./specific.txt', 'utf8');
         const rows = data.split('\n').map(line => {
@@ -64,18 +62,22 @@ async function importStock() {
             } : null;
         }).filter(Boolean);
 
+        let added = 0;
         if (rows.length) {
-            // Check if account already exists before inserting
             for (let row of rows) {
-                const exists = await Account.findOne({ username: row.username, used: false });
+                const exists = await Account.findOne({ username: row.username });
                 if (!exists) {
                     await Account.create(row);
+                    added++;
                 }
             }
         }
-    } catch (e) {}
+        console.log(`✅ Added ${added} new specific accounts`);
+    } catch (e) {
+        console.log('❌ Error reading specific.txt:', e.message);
+    }
 
-    // random.txt = username:age
+    // random.txt
     try {
         const data = fs.readFileSync('./random.txt', 'utf8');
         const rows = data.split('\n').map(line => {
@@ -91,18 +93,26 @@ async function importStock() {
             } : null;
         }).filter(Boolean);
 
+        let added = 0;
         if (rows.length) {
             for (let row of rows) {
-                const exists = await Account.findOne({ username: row.username, used: false });
+                const exists = await Account.findOne({ username: row.username });
                 if (!exists) {
                     await Account.create(row);
+                    added++;
                 }
             }
         }
-    } catch (e) {}
+        console.log(`✅ Added ${added} new random accounts`);
+    } catch (e) {
+        console.log('❌ Error reading random.txt:', e.message);
+    }
+
+    const available = await Account.countDocuments({ used: false });
+    const used = await Account.countDocuments({ used: true });
+    console.log(`📊 ${available} available, ${used} used accounts`);
 }
 
-// Get random account - only get unused ones
 async function getRandomAccount() {
     const acc = await Account.findOne({ type: 'random', used: false });
     if (acc) {
@@ -113,7 +123,6 @@ async function getRandomAccount() {
     return null;
 }
 
-// Get specific account - only get unused ones
 async function getSpecificAccount(requestedAge) {
     const accounts = await Account.find({ type: 'specific', used: false });
     if (accounts.length === 0) return null;
@@ -134,12 +143,6 @@ async function getSpecificAccount(requestedAge) {
     return closest;
 }
 
-// Check stock
-async function hasStock() {
-    const count = await Account.countDocuments({ used: false });
-    return count > 0;
-}
-
 client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
     
@@ -153,13 +156,7 @@ client.once('ready', async () => {
             socketTimeoutMS: 30000,
         });
         console.log('✅ Connected to MongoDB');
-        
-        // Clear out used accounts older than 7 days (optional)
-        // await Account.deleteMany({ used: true, updatedAt: { $lt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } });
-        
         await importStock();
-        const available = await Account.countDocuments({ used: false });
-        console.log(`✅ Stock imported. ${available} accounts available.`);
     } catch (error) {
         console.log('❌ MongoDB error:', error.message);
     }
@@ -168,14 +165,6 @@ client.once('ready', async () => {
         new SlashCommandBuilder()
             .setName('genpanel')
             .setDescription('Post the generator panel')
-            .setDefaultMemberPermissions(8),
-        new SlashCommandBuilder()
-            .setName('refreshstock')
-            .setDescription('Refresh stock from text files')
-            .setDefaultMemberPermissions(8),
-        new SlashCommandBuilder()
-            .setName('stock')
-            .setDescription('Check available stock')
             .setDefaultMemberPermissions(8)
     ].map(cmd => cmd.toJSON());
 
@@ -204,29 +193,11 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] });
     }
 
-    if (interaction.isChatInputCommand() && interaction.commandName === 'refreshstock') {
-        await interaction.deferReply({ ephemeral: true });
-        await importStock();
-        const available = await Account.countDocuments({ used: false });
-        await interaction.editReply({ content: `✅ Stock refreshed! ${available} accounts available.` });
-    }
-
-    if (interaction.isChatInputCommand() && interaction.commandName === 'stock') {
-        await interaction.deferReply({ ephemeral: true });
-        const randomCount = await Account.countDocuments({ type: 'random', used: false });
-        const specificCount = await Account.countDocuments({ type: 'specific', used: false });
-        const total = randomCount + specificCount;
-        
-        await interaction.editReply({ 
-            content: `📊 Stock: ${total} total (${randomCount} random, ${specificCount} specific)` 
-        });
-    }
-
     if (interaction.isButton() && interaction.customId === 'generate_account') {
-        const available = await hasStock();
-        if (!available) {
+        const available = await Account.countDocuments({ used: false });
+        if (available === 0) {
             return interaction.reply({
-                content: '❌ Out of stock! Use `/refreshstock` to reload.',
+                content: '❌ Out of stock! Add more accounts to the text files and restart the bot.',
                 ephemeral: true
             });
         }
@@ -265,7 +236,7 @@ client.on('interactionCreate', async interaction => {
         }
 
         if (!acc) {
-            return interaction.editReply({ content: 'Out of stock. Use `/refreshstock` to reload.' });
+            return interaction.editReply({ content: '❌ Out of stock. Add more accounts to the text files and restart the bot.' });
         }
 
         try {
@@ -290,9 +261,9 @@ client.on('interactionCreate', async interaction => {
                 );
 
             await channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
-            await interaction.editReply({ content: `Account sent to ${channel}` });
+            await interaction.editReply({ content: `✅ Account sent to ${channel}` });
         } catch (err) {
-            await interaction.editReply({ content: 'Failed to create channel.' });
+            await interaction.editReply({ content: '❌ Failed to create channel.' });
         }
     }
 });
