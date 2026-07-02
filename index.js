@@ -35,23 +35,40 @@ const AccountSchema = new mongoose.Schema({
     username: String,
     password: String,
     age: Number,
-    type: String,
+    type: String, // 'old' or 'new'
+    created: String,
+    region: { type: String, default: 'Unknown' },
     used: { type: Boolean, default: false }
 });
 
 const Account = mongoose.model('Account', AccountSchema);
 
 const COMMON_PASSWORD = process.env.ACCOUNT_PASSWORD;
+const PUBLIC_CHANNEL_ID = process.env.PUBLIC_CHANNEL_ID;
+
+// Store current preview account per user
+const userPreviews = new Map();
 
 async function importStock() {
-    // specific.txt = username:age
+    // Clear old unused accounts
+    await Account.deleteMany({ used: false });
+
+    // OLD STOCK: username:age (uses env password)
     try {
         const data = fs.readFileSync('./specific.txt', 'utf8');
         const rows = data.split('\n').map(line => {
             const t = line.trim();
             if (!t) return null;
             const [username, ageStr] = t.split(':');
-            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'specific', used: false } : null;
+            return username ? { 
+                username: username.trim(), 
+                password: COMMON_PASSWORD, 
+                age: parseInt(ageStr) || 0, 
+                type: 'old',
+                created: 'Unknown',
+                region: 'Unknown',
+                used: false 
+            } : null;
         }).filter(Boolean);
 
         if (rows.length) {
@@ -62,16 +79,32 @@ async function importStock() {
                 }
             }
         }
-    } catch (e) {}
+        console.log(`✅ Imported ${rows.length} old accounts`);
+    } catch (e) {
+        console.log('No specific.txt found');
+    }
 
-    // random.txt = username:age
+    // NEW STOCK: username:password:age:created
     try {
-        const data = fs.readFileSync('./random.txt', 'utf8');
+        const data = fs.readFileSync('./accounts.txt', 'utf8');
         const rows = data.split('\n').map(line => {
             const t = line.trim();
             if (!t) return null;
-            const [username, ageStr] = t.split(':');
-            return username ? { username: username.trim(), password: COMMON_PASSWORD, age: parseInt(ageStr) || 0, type: 'random', used: false } : null;
+            const parts = t.split(':');
+            if (parts.length >= 4) {
+                const age = parseInt(parts[2]) || 0;
+                let created = parts[3].trim() || 'Unknown';
+                return {
+                    username: parts[0].trim(),
+                    password: parts[1].trim(),
+                    age: age,
+                    created: created,
+                    type: 'new',
+                    region: 'United States',
+                    used: false
+                };
+            }
+            return null;
         }).filter(Boolean);
 
         if (rows.length) {
@@ -82,11 +115,14 @@ async function importStock() {
                 }
             }
         }
-    } catch (e) {}
+        console.log(`✅ Imported ${rows.length} new accounts`);
+    } catch (e) {
+        console.log('No accounts.txt found');
+    }
 }
 
 async function getRandomAccount() {
-    const acc = await Account.findOne({ type: 'random', used: false });
+    const acc = await Account.findOne({ used: false });
     if (acc) {
         acc.used = true;
         await acc.save();
@@ -96,7 +132,7 @@ async function getRandomAccount() {
 }
 
 async function getSpecificAccount(requestedAge) {
-    const accounts = await Account.find({ type: 'specific', used: false });
+    const accounts = await Account.find({ used: false });
     if (accounts.length === 0) return null;
     
     let closest = accounts[0];
@@ -115,6 +151,16 @@ async function getSpecificAccount(requestedAge) {
     return closest;
 }
 
+async function getPreviewAccount() {
+    const acc = await Account.findOne({ used: false });
+    if (!acc) return null;
+    return acc;
+}
+
+async function getTotalStock() {
+    return await Account.countDocuments({ used: false });
+}
+
 client.once('ready', async () => {
     console.log(`${client.user.tag} online`);
     
@@ -129,6 +175,9 @@ client.once('ready', async () => {
         });
         console.log('Connected to MongoDB');
         await importStock();
+        
+        const total = await getTotalStock();
+        console.log(`📊 ${total} accounts available`);
     } catch (error) {
         console.log('MongoDB error:', error.message);
     }
@@ -143,6 +192,7 @@ client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+        console.log('Commands registered');
     } catch (e) {
         console.log('Command registration error:', e.message);
     }
@@ -150,56 +200,195 @@ client.once('ready', async () => {
 
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand() && interaction.commandName === 'genpanel') {
+        const total = await getTotalStock();
         const embed = new EmbedBuilder()
-            .setTitle('Roblox Account Generator')
-            .setDescription('Click the button to generate an account')
+            .setTitle('🔍 Browse Accounts')
+            .setDescription(`Click the button below to start browsing accounts\n\n**${total} accounts available**`)
             .setColor('Blurple');
 
         const button = new ButtonBuilder()
-            .setCustomId('generate_account')
-            .setLabel('Generate Account')
+            .setCustomId('browse_accounts')
+            .setLabel('Browse Accounts')
             .setStyle(ButtonStyle.Primary)
-            .setEmoji('🔑');
+            .setEmoji('🔍');
 
         await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] });
     }
 
-    if (interaction.isButton() && interaction.customId === 'generate_account') {
-        const modal = new ModalBuilder()
-            .setCustomId('age_modal')
-            .setTitle('Request Account');
-
-        const input = new TextInputBuilder()
-            .setCustomId('requested_age')
-            .setLabel('Desired Age in Days')
-            .setPlaceholder('Leave blank for random')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(false);
-
-        await interaction.showModal(modal.addComponents(new ActionRowBuilder().addComponents(input)));
-    }
-
-    if (interaction.isModalSubmit() && interaction.customId === 'age_modal') {
-        await interaction.deferReply({ ephemeral: true });
-
-        const input = interaction.fields.getTextInputValue('requested_age').trim();
-        const requestedAge = input ? parseInt(input) : NaN;
-
-        let acc;
-        let isRandom = isNaN(requestedAge);
-
-        try {
-            if (isRandom) {
-                acc = await getRandomAccount();
-            } else {
-                acc = await getSpecificAccount(requestedAge);
-            }
-        } catch (e) {
-            console.log('Database error:', e.message);
+    if (interaction.isButton() && interaction.customId === 'browse_accounts') {
+        const total = await getTotalStock();
+        if (total === 0) {
+            return interaction.reply({ content: 'Out of stock.', ephemeral: true });
         }
 
+        const acc = await getPreviewAccount();
         if (!acc) {
-            return interaction.editReply({ content: 'Out of stock.' });
+            return interaction.reply({ content: 'Out of stock.', ephemeral: true });
+        }
+
+        userPreviews.set(interaction.user.id, acc);
+
+        const embed = new EmbedBuilder()
+            .setTitle('🔍 Browse Accounts')
+            .setDescription('Review account details and click Generate This Account when ready')
+            .setColor('Blurple')
+            .addFields(
+                { name: 'Username', value: `\`${acc.username}\``, inline: true },
+                { name: 'User ID', value: `\`${Math.floor(Math.random() * 10000000000)}\``, inline: true },
+                { name: 'Region', value: acc.region || 'United States', inline: true },
+                { name: 'Created', value: acc.created || 'Unknown', inline: true },
+                { name: 'Account Age', value: `${acc.age} days`, inline: true },
+                { name: 'Last Online', value: 'Offline', inline: true }
+            )
+            .setFooter({ text: `Showing account 1 of ${total}` });
+
+        const row1 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('prev_account')
+                    .setLabel('Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true),
+                new ButtonBuilder()
+                    .setCustomId('pick_account')
+                    .setLabel('Generate This Account')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('✅'),
+                new ButtonBuilder()
+                    .setCustomId('next_account')
+                    .setLabel('Next')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('back_options')
+                    .setLabel('Back to Options')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await interaction.reply({ 
+            embeds: [embed], 
+            components: [row1, row2],
+            ephemeral: true
+        });
+    }
+
+    if (interaction.isButton() && interaction.customId === 'next_account') {
+        const total = await getTotalStock();
+        const acc = await getPreviewAccount();
+        if (!acc) {
+            return interaction.update({ content: 'Out of stock.', embeds: [], components: [] });
+        }
+
+        userPreviews.set(interaction.user.id, acc);
+
+        const pageNum = Math.floor(Math.random() * total) + 1;
+
+        const embed = new EmbedBuilder()
+            .setTitle('🔍 Browse Accounts')
+            .setDescription('Review account details and click Generate This Account when ready')
+            .setColor('Blurple')
+            .addFields(
+                { name: 'Username', value: `\`${acc.username}\``, inline: true },
+                { name: 'User ID', value: `\`${Math.floor(Math.random() * 10000000000)}\``, inline: true },
+                { name: 'Region', value: acc.region || 'United States', inline: true },
+                { name: 'Created', value: acc.created || 'Unknown', inline: true },
+                { name: 'Account Age', value: `${acc.age} days`, inline: true },
+                { name: 'Last Online', value: 'Offline', inline: true }
+            )
+            .setFooter({ text: `Showing account ${pageNum} of ${total}` });
+
+        const row1 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('prev_account')
+                    .setLabel('Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true),
+                new ButtonBuilder()
+                    .setCustomId('pick_account')
+                    .setLabel('Generate This Account')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('✅'),
+                new ButtonBuilder()
+                    .setCustomId('next_account')
+                    .setLabel('Next')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('back_options')
+                    .setLabel('Back to Options')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await interaction.update({ embeds: [embed], components: [row1, row2] });
+    }
+
+    if (interaction.isButton() && interaction.customId === 'pick_account') {
+        const acc = userPreviews.get(interaction.user.id);
+        if (!acc) {
+            return interaction.reply({ content: 'No account selected.', ephemeral: true });
+        }
+
+        const dbAcc = await Account.findOne({ username: acc.username, used: false });
+        if (!dbAcc) {
+            userPreviews.delete(interaction.user.id);
+            return interaction.update({ content: 'Account already taken.', embeds: [], components: [] });
+        }
+
+        dbAcc.used = true;
+        await dbAcc.save();
+        userPreviews.delete(interaction.user.id);
+
+        await interaction.update({ content: '✅ Generating account...', embeds: [], components: [] });
+
+        try {
+            const publicChannel = await client.channels.fetch(PUBLIC_CHANNEL_ID);
+            
+            const publicEmbed = new EmbedBuilder()
+                .setTitle('🎮 Account Generated')
+                .setColor('Green')
+                .addFields(
+                    { name: 'Username', value: `\`${dbAcc.username}\``, inline: true },
+                    { name: 'User ID', value: `\`${Math.floor(Math.random() * 10000000000)}\``, inline: true },
+                    { name: 'Region', value: dbAcc.region || 'United States', inline: true },
+                    { name: 'Created', value: dbAcc.created || 'Unknown', inline: true },
+                    { name: 'Account Age', value: `${dbAcc.age} days`, inline: true },
+                    { name: 'Last Online', value: 'Offline', inline: true }
+                )
+                .setFooter({ text: 'Click the button below to claim this account' });
+
+            const claimButton = new ButtonBuilder()
+                .setCustomId(`claim_${dbAcc._id}`)
+                .setLabel('Claim This Account')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🔑');
+
+            await publicChannel.send({
+                content: `🎉 New account generated!`,
+                embeds: [publicEmbed],
+                components: [new ActionRowBuilder().addComponents(claimButton)]
+            });
+
+            await interaction.followUp({ content: `✅ Account sent to <#${PUBLIC_CHANNEL_ID}>`, ephemeral: true });
+
+        } catch (err) {
+            console.error('Error:', err);
+            await interaction.followUp({ content: 'Failed to send account.', ephemeral: true });
+        }
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('claim_')) {
+        const accountId = interaction.customId.split('_')[1];
+        const acc = await Account.findById(accountId);
+        
+        if (!acc) {
+            return interaction.reply({ content: 'Account not found.', ephemeral: true });
         }
 
         try {
@@ -216,18 +405,44 @@ client.on('interactionCreate', async interaction => {
             const embed = new EmbedBuilder()
                 .setTitle('Account Generated')
                 .setColor('Green')
-                .setDescription(
-                    `**Username**\n\`${acc.username}\`\n\n` +
-                    `**Password**\n\`${acc.password}\`\n\n` +
-                    `**Account Age**\n${acc.age} days\n\n` +
-                    `**Requested**\n${isRandom ? 'Random' : requestedAge + ' days'}`
+                .addFields(
+                    { name: 'Username', value: `\`${acc.username}\``, inline: true },
+                    { name: 'Password', value: `\`${acc.password}\``, inline: true },
+                    { name: 'User ID', value: `\`${Math.floor(Math.random() * 10000000000)}\``, inline: true },
+                    { name: 'Region', value: acc.region || 'United States', inline: true },
+                    { name: 'Created', value: acc.created || 'Unknown', inline: true },
+                    { name: 'Account Age', value: `${acc.age} days`, inline: true },
+                    { name: 'Last Online', value: 'Offline', inline: true }
                 );
 
             await channel.send({ content: `<@${interaction.user.id}>`, embeds: [embed] });
-            await interaction.editReply({ content: `Account sent to ${channel}` });
+            await interaction.reply({ content: `✅ Account sent to ${channel}`, ephemeral: true });
+
         } catch (err) {
-            await interaction.editReply({ content: 'Failed to create channel.' });
+            console.error('Error:', err);
+            await interaction.reply({ content: 'Failed to create channel.', ephemeral: true });
         }
+    }
+
+    if (interaction.isButton() && interaction.customId === 'back_options') {
+        const total = await getTotalStock();
+        const embed = new EmbedBuilder()
+            .setTitle('🔍 Browse Accounts')
+            .setDescription(`Click the button below to start browsing accounts\n\n**${total} accounts available**`)
+            .setColor('Blurple');
+
+        const button = new ButtonBuilder()
+            .setCustomId('browse_accounts')
+            .setLabel('Browse Accounts')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🔍');
+
+        await interaction.update({ embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] });
+    }
+
+    if (interaction.isButton() && interaction.customId === 'prev_account') {
+        // Previous button is disabled in this version
+        await interaction.reply({ content: 'No previous account.', ephemeral: true });
     }
 });
 
