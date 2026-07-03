@@ -34,7 +34,7 @@ setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000)
 const AccountSchema = new mongoose.Schema({
     username: String,
     password: String,
-    age: Number,
+    birthdayAge: String,
     created: String,
     used: { type: Boolean, default: false }
 });
@@ -46,9 +46,20 @@ const PUBLIC_CHANNEL_ID = process.env.PUBLIC_CHANNEL_ID;
 // Track which accounts each user has seen
 const userViewedAccounts = new Map();
 
-async function importStock() {
-    // DON'T delete anything! Just add new accounts that don't exist yet
+function formatCreatedDate(createdStr) {
+    if (createdStr.endsWith('d')) {
+        return createdStr.replace('d', ' days');
+    }
+    if (createdStr.endsWith('m')) {
+        return createdStr.replace('m', ' months');
+    }
+    if (createdStr.endsWith('y')) {
+        return createdStr.replace('y', ' years');
+    }
+    return createdStr || 'Unknown';
+}
 
+async function importStock() {
     try {
         const data = fs.readFileSync('./accounts.txt', 'utf8');
         const rows = data.split('\n').map(line => {
@@ -59,7 +70,7 @@ async function importStock() {
                 return {
                     username: parts[0].trim(),
                     password: parts[1].trim(),
-                    age: parseInt(parts[2]) || 0,
+                    birthdayAge: parts[2].trim() || 'Unknown',
                     created: parts[3].trim() || 'Unknown',
                     used: false
                 };
@@ -103,10 +114,13 @@ async function getSpecificAccount(requestedAge, userId) {
         username: { $nin: viewed }
     });
     if (accounts.length === 0) return null;
+    
     let closest = accounts[0];
-    let minDiff = Math.abs(accounts[0].age - requestedAge);
+    let minDiff = Math.abs(parseInt(accounts[0].birthdayAge) || 0 - requestedAge);
+    
     for (let account of accounts) {
-        const diff = Math.abs(account.age - requestedAge);
+        const ageNum = parseInt(account.birthdayAge) || 0;
+        const diff = Math.abs(ageNum - requestedAge);
         if (diff < minDiff) {
             minDiff = diff;
             closest = account;
@@ -253,11 +267,12 @@ client.on('interactionCreate', async interaction => {
             
             const publicEmbed = new EmbedBuilder()
                 .setTitle('Account Generated')
-                .setColor('Blue')
+                .setColor(0x2B2D31)
+                .setDescription('Review account details and click Keep This Account when ready')
                 .addFields(
-                    { name: 'Username', value: `\`${acc.username}\``, inline: true },
-                    { name: 'Account Age', value: `${acc.age} days`, inline: true },
-                    { name: 'Created', value: acc.created || 'Unknown', inline: true }
+                    { name: 'Username', value: `\`${acc.username}\``, inline: false },
+                    { name: 'Account Age', value: acc.birthdayAge || 'Unknown', inline: true },
+                    { name: 'Created', value: formatCreatedDate(acc.created) || 'Unknown', inline: true }
                 )
                 .setFooter({ text: `Requested: ${isRandom ? 'Random' : requestedAge + ' days'}` });
 
@@ -312,7 +327,7 @@ client.on('interactionCreate', async interaction => {
         const embed = new EmbedBuilder()
             .setTitle('Generate New Account')
             .setDescription('Choose how you want to generate the next account')
-            .setColor('Blurple');
+            .setColor(0x2B2D31);
 
         const row2 = new ActionRowBuilder()
             .addComponents(
@@ -366,11 +381,12 @@ client.on('interactionCreate', async interaction => {
             
             const publicEmbed = new EmbedBuilder()
                 .setTitle('Account Generated')
-                .setColor('Blue')
+                .setColor(0x2B2D31)
+                .setDescription('Review account details and click Keep This Account when ready')
                 .addFields(
-                    { name: 'Username', value: `\`${acc.username}\``, inline: true },
-                    { name: 'Account Age', value: `${acc.age} days`, inline: true },
-                    { name: 'Created', value: acc.created || 'Unknown', inline: true }
+                    { name: 'Username', value: `\`${acc.username}\``, inline: false },
+                    { name: 'Account Age', value: acc.birthdayAge || 'Unknown', inline: true },
+                    { name: 'Created', value: formatCreatedDate(acc.created) || 'Unknown', inline: true }
                 )
                 .setFooter({ text: 'Requested: Random' });
 
@@ -412,8 +428,8 @@ client.on('interactionCreate', async interaction => {
 
         const input = new TextInputBuilder()
             .setCustomId('requested_age')
-            .setLabel('Desired Age in Days')
-            .setPlaceholder('Enter the age in days')
+            .setLabel('Desired Birthday Age (e.g., 21)')
+            .setPlaceholder('Enter the age requirement')
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
@@ -460,13 +476,14 @@ client.on('interactionCreate', async interaction => {
             
             const publicEmbed = new EmbedBuilder()
                 .setTitle('Account Generated')
-                .setColor('Blue')
+                .setColor(0x2B2D31)
+                .setDescription('Review account details and click Keep This Account when ready')
                 .addFields(
-                    { name: 'Username', value: `\`${acc.username}\``, inline: true },
-                    { name: 'Account Age', value: `${acc.age} days`, inline: true },
-                    { name: 'Created', value: acc.created || 'Unknown', inline: true }
+                    { name: 'Username', value: `\`${acc.username}\``, inline: false },
+                    { name: 'Account Age', value: acc.birthdayAge || 'Unknown', inline: true },
+                    { name: 'Created', value: formatCreatedDate(acc.created) || 'Unknown', inline: true }
                 )
-                .setFooter({ text: `Requested: ${requestedAge} days (closest match: ${acc.age} days)` });
+                .setFooter({ text: `Requested: ${requestedAge}+ (closest match: ${acc.birthdayAge})` });
 
             const row = new ActionRowBuilder()
                 .addComponents(
@@ -537,12 +554,12 @@ client.on('interactionCreate', async interaction => {
 
             const embed = new EmbedBuilder()
                 .setTitle('Account Generated')
-                .setColor('Blue')
+                .setColor(0x2B2D31)
                 .addFields(
-                    { name: 'Username', value: `\`${acc.username}\``, inline: true },
-                    { name: 'Password', value: `\`${acc.password}\``, inline: true },
-                    { name: 'Account Age', value: `${acc.age} days`, inline: true },
-                    { name: 'Created', value: acc.created || 'Unknown', inline: true }
+                    { name: 'Username', value: `\`${acc.username}\``, inline: false },
+                    { name: 'Password', value: `\`${acc.password}\``, inline: false },
+                    { name: 'Account Age', value: acc.birthdayAge || 'Unknown', inline: true },
+                    { name: 'Created', value: formatCreatedDate(acc.created) || 'Unknown', inline: true }
                 )
                 .setFooter({ text: 'Account claimed' });
 
