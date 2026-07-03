@@ -43,6 +43,9 @@ const Account = mongoose.model('Account', AccountSchema);
 
 const PUBLIC_CHANNEL_ID = process.env.PUBLIC_CHANNEL_ID;
 
+// Track which accounts each user has seen (PER USER)
+const userViewedAccounts = new Map();
+
 async function importStock() {
     await Account.deleteMany({});
 
@@ -78,13 +81,27 @@ async function importStock() {
     }
 }
 
-async function getRandomAccount() {
-    const acc = await Account.findOne({ used: false });
+async function getRandomAccount(userId) {
+    // Get accounts this user has already seen
+    const viewed = userViewedAccounts.get(userId) || [];
+    
+    // Find an unused account that this user hasn't seen
+    const acc = await Account.findOne({ 
+        used: false,
+        username: { $nin: viewed }
+    });
+    
     return acc || null;
 }
 
-async function getSpecificAccount(requestedAge) {
-    const accounts = await Account.find({ used: false });
+async function getSpecificAccount(requestedAge, userId) {
+    const viewed = userViewedAccounts.get(userId) || [];
+    
+    const accounts = await Account.find({ 
+        used: false,
+        username: { $nin: viewed }
+    });
+    
     if (accounts.length === 0) return null;
     
     let closest = accounts[0];
@@ -111,7 +128,15 @@ async function markAccountUsed(username) {
     return null;
 }
 
-async function getTotalStock() {
+async function getTotalStock(userId) {
+    const viewed = userViewedAccounts.get(userId) || [];
+    return await Account.countDocuments({ 
+        used: false,
+        username: { $nin: viewed }
+    });
+}
+
+async function getTotalStockGlobal() {
     return await Account.countDocuments({ used: false });
 }
 
@@ -130,7 +155,7 @@ client.once('ready', async () => {
         console.log('Connected to MongoDB');
         await importStock();
         
-        const total = await getTotalStock();
+        const total = await getTotalStockGlobal();
         console.log(`📊 ${total} accounts available`);
     } catch (error) {
         console.log('MongoDB error:', error.message);
@@ -155,7 +180,7 @@ client.once('ready', async () => {
 client.on('interactionCreate', async interaction => {
     // GENPANEL COMMAND
     if (interaction.isChatInputCommand() && interaction.commandName === 'genpanel') {
-        const total = await getTotalStock();
+        const total = await getTotalStockGlobal();
         const embed = new EmbedBuilder()
             .setTitle('Roblox Account Generator')
             .setDescription(`Click the button to generate an account\n\n**${total} accounts available**`)
@@ -171,8 +196,18 @@ client.on('interactionCreate', async interaction => {
 
     // GENERATE ACCOUNT BUTTON - Opens modal
     if (interaction.isButton() && interaction.customId === 'generate_account') {
-        const total = await getTotalStock();
+        const total = await getTotalStock(interaction.user.id);
         if (total === 0) {
+            // Check if there are accounts but user has seen them all
+            const globalTotal = await getTotalStockGlobal();
+            if (globalTotal > 0) {
+                // Clear user's viewed history so they can see accounts again
+                userViewedAccounts.delete(interaction.user.id);
+                return interaction.reply({ 
+                    content: 'You have seen all available accounts. Starting over with fresh accounts.',
+                    ephemeral: true 
+                });
+            }
             return interaction.reply({ content: 'Out of stock.', ephemeral: true });
         }
 
@@ -200,14 +235,31 @@ client.on('interactionCreate', async interaction => {
 
         let acc;
         if (isRandom) {
-            acc = await getRandomAccount();
+            acc = await getRandomAccount(interaction.user.id);
         } else {
-            acc = await getSpecificAccount(requestedAge);
+            acc = await getSpecificAccount(requestedAge, interaction.user.id);
         }
 
         if (!acc) {
+            // Check if user has seen all accounts
+            const total = await getTotalStock(interaction.user.id);
+            if (total === 0) {
+                const globalTotal = await getTotalStockGlobal();
+                if (globalTotal > 0) {
+                    userViewedAccounts.delete(interaction.user.id);
+                    return interaction.editReply({ 
+                        content: 'You have seen all available accounts. Please try again with a fresh view.' 
+                    });
+                }
+            }
             return interaction.editReply({ content: 'Out of stock.' });
         }
+
+        // Add this account to user's viewed list
+        if (!userViewedAccounts.has(interaction.user.id)) {
+            userViewedAccounts.set(interaction.user.id, []);
+        }
+        userViewedAccounts.get(interaction.user.id).push(acc.username);
 
         try {
             const publicChannel = await client.channels.fetch(PUBLIC_CHANNEL_ID);
@@ -305,10 +357,26 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        const acc = await getRandomAccount();
+        const acc = await getRandomAccount(interaction.user.id);
         if (!acc) {
+            const total = await getTotalStock(interaction.user.id);
+            if (total === 0) {
+                const globalTotal = await getTotalStockGlobal();
+                if (globalTotal > 0) {
+                    userViewedAccounts.delete(interaction.user.id);
+                    return interaction.editReply({ 
+                        content: 'You have seen all available accounts. Please try again.' 
+                    });
+                }
+            }
             return interaction.editReply({ content: 'Out of stock.' });
         }
+
+        // Add to user's viewed list
+        if (!userViewedAccounts.has(interaction.user.id)) {
+            userViewedAccounts.set(interaction.user.id, []);
+        }
+        userViewedAccounts.get(interaction.user.id).push(acc.username);
 
         try {
             const publicChannel = await client.channels.fetch(PUBLIC_CHANNEL_ID);
@@ -386,10 +454,26 @@ client.on('interactionCreate', async interaction => {
             return interaction.editReply({ content: 'Please enter a valid number.' });
         }
 
-        const acc = await getSpecificAccount(requestedAge);
+        const acc = await getSpecificAccount(requestedAge, interaction.user.id);
         if (!acc) {
+            const total = await getTotalStock(interaction.user.id);
+            if (total === 0) {
+                const globalTotal = await getTotalStockGlobal();
+                if (globalTotal > 0) {
+                    userViewedAccounts.delete(interaction.user.id);
+                    return interaction.editReply({ 
+                        content: 'You have seen all available accounts. Please try again.' 
+                    });
+                }
+            }
             return interaction.editReply({ content: 'No account found with that age.' });
         }
+
+        // Add to user's viewed list
+        if (!userViewedAccounts.has(interaction.user.id)) {
+            userViewedAccounts.set(interaction.user.id, []);
+        }
+        userViewedAccounts.get(interaction.user.id).push(acc.username);
 
         try {
             const publicChannel = await client.channels.fetch(PUBLIC_CHANNEL_ID);
