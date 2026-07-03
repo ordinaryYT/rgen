@@ -43,11 +43,11 @@ const Account = mongoose.model('Account', AccountSchema);
 
 const PUBLIC_CHANNEL_ID = process.env.PUBLIC_CHANNEL_ID;
 
-// Track which accounts each user has seen (PER USER)
+// Track which accounts each user has seen
 const userViewedAccounts = new Map();
 
 async function importStock() {
-    await Account.deleteMany({});
+    // DON'T delete anything! Just add new accounts that don't exist yet
 
     try {
         const data = fs.readFileSync('./accounts.txt', 'utf8');
@@ -67,46 +67,44 @@ async function importStock() {
             return null;
         }).filter(Boolean);
 
+        let added = 0;
         if (rows.length) {
             for (let row of rows) {
                 const exists = await Account.findOne({ username: row.username });
                 if (!exists) {
                     await Account.create(row);
+                    added++;
                 }
             }
         }
-        console.log(`Imported ${rows.length} accounts`);
+        console.log(`Added ${added} new accounts`);
     } catch (e) {
         console.log('No accounts.txt found');
     }
+
+    const total = await Account.countDocuments({});
+    const available = await Account.countDocuments({ used: false });
+    console.log(`Total: ${total}, Available: ${available}`);
 }
 
 async function getRandomAccount(userId) {
-    // Get accounts this user has already seen
     const viewed = userViewedAccounts.get(userId) || [];
-    
-    // Find an unused account that this user hasn't seen
     const acc = await Account.findOne({ 
         used: false,
         username: { $nin: viewed }
     });
-    
     return acc || null;
 }
 
 async function getSpecificAccount(requestedAge, userId) {
     const viewed = userViewedAccounts.get(userId) || [];
-    
     const accounts = await Account.find({ 
         used: false,
         username: { $nin: viewed }
     });
-    
     if (accounts.length === 0) return null;
-    
     let closest = accounts[0];
     let minDiff = Math.abs(accounts[0].age - requestedAge);
-    
     for (let account of accounts) {
         const diff = Math.abs(account.age - requestedAge);
         if (diff < minDiff) {
@@ -114,7 +112,6 @@ async function getSpecificAccount(requestedAge, userId) {
             closest = account;
         }
     }
-    
     return closest;
 }
 
@@ -154,9 +151,6 @@ client.once('ready', async () => {
         });
         console.log('Connected to MongoDB');
         await importStock();
-        
-        const total = await getTotalStockGlobal();
-        console.log(`📊 ${total} accounts available`);
     } catch (error) {
         console.log('MongoDB error:', error.message);
     }
@@ -178,7 +172,6 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async interaction => {
-    // GENPANEL COMMAND
     if (interaction.isChatInputCommand() && interaction.commandName === 'genpanel') {
         const total = await getTotalStockGlobal();
         const embed = new EmbedBuilder()
@@ -194,14 +187,11 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] });
     }
 
-    // GENERATE ACCOUNT BUTTON - Opens modal
     if (interaction.isButton() && interaction.customId === 'generate_account') {
         const total = await getTotalStock(interaction.user.id);
         if (total === 0) {
-            // Check if there are accounts but user has seen them all
             const globalTotal = await getTotalStockGlobal();
             if (globalTotal > 0) {
-                // Clear user's viewed history so they can see accounts again
                 userViewedAccounts.delete(interaction.user.id);
                 return interaction.reply({ 
                     content: 'You have seen all available accounts. Starting over with fresh accounts.',
@@ -225,7 +215,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal.addComponents(new ActionRowBuilder().addComponents(input)));
     }
 
-    // MODAL SUBMIT
     if (interaction.isModalSubmit() && interaction.customId === 'age_modal') {
         await interaction.deferReply({ ephemeral: true });
 
@@ -241,21 +230,19 @@ client.on('interactionCreate', async interaction => {
         }
 
         if (!acc) {
-            // Check if user has seen all accounts
             const total = await getTotalStock(interaction.user.id);
             if (total === 0) {
                 const globalTotal = await getTotalStockGlobal();
                 if (globalTotal > 0) {
                     userViewedAccounts.delete(interaction.user.id);
                     return interaction.editReply({ 
-                        content: 'You have seen all available accounts. Please try again with a fresh view.' 
+                        content: 'You have seen all available accounts. Please try again.' 
                     });
                 }
             }
             return interaction.editReply({ content: 'Out of stock.' });
         }
 
-        // Add this account to user's viewed list
         if (!userViewedAccounts.has(interaction.user.id)) {
             userViewedAccounts.set(interaction.user.id, []);
         }
@@ -300,10 +287,8 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // GENERATE NEW ACCOUNT BUTTON
     if (interaction.isButton() && interaction.customId.startsWith('new_')) {
         const userId = interaction.customId.split('_')[1];
-        
         if (userId !== interaction.user.id) {
             return interaction.reply({ content: 'You did not generate this account.', ephemeral: true });
         }
@@ -348,7 +333,6 @@ client.on('interactionCreate', async interaction => {
         });
     }
 
-    // RANDOM ACCOUNT BUTTON
     if (interaction.isButton() && interaction.customId.startsWith('random_')) {
         const userId = interaction.customId.split('_')[1];
         if (userId !== interaction.user.id) {
@@ -372,7 +356,6 @@ client.on('interactionCreate', async interaction => {
             return interaction.editReply({ content: 'Out of stock.' });
         }
 
-        // Add to user's viewed list
         if (!userViewedAccounts.has(interaction.user.id)) {
             userViewedAccounts.set(interaction.user.id, []);
         }
@@ -417,7 +400,6 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // SPECIFIC AGE BUTTON
     if (interaction.isButton() && interaction.customId.startsWith('specific_')) {
         const userId = interaction.customId.split('_')[1];
         if (userId !== interaction.user.id) {
@@ -438,7 +420,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal.addComponents(new ActionRowBuilder().addComponents(input)));
     }
 
-    // SPECIFIC AGE MODAL SUBMIT
     if (interaction.isModalSubmit() && interaction.customId.startsWith('age_modal_')) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -469,7 +450,6 @@ client.on('interactionCreate', async interaction => {
             return interaction.editReply({ content: 'No account found with that age.' });
         }
 
-        // Add to user's viewed list
         if (!userViewedAccounts.has(interaction.user.id)) {
             userViewedAccounts.set(interaction.user.id, []);
         }
@@ -514,7 +494,6 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // KEEP ACCOUNT BUTTON
     if (interaction.isButton() && interaction.customId.startsWith('keep_')) {
         const username = interaction.customId.split('_')[1];
         
@@ -576,7 +555,6 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // Disabled button handlers
     if (interaction.isButton() && (interaction.customId === 'keep_disabled' || interaction.customId === 'new_disabled')) {
         return interaction.reply({ content: 'This account has already been processed.', ephemeral: true });
     }
