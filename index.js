@@ -34,8 +34,8 @@ setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000)
 const AccountSchema = new mongoose.Schema({
     username: String,
     password: String,
-    birthdayAge: String, // e.g., "21+" - this is the account age
-    created: String, // e.g., "30d" - when the account was created
+    birthdayAge: String, // e.g., "21+" - display only
+    created: String, // e.g., "30d" - this is what users search by
     used: { type: Boolean, default: false }
 });
 
@@ -115,12 +115,12 @@ async function getSpecificAccount(requestedAge, userId) {
     });
     if (accounts.length === 0) return null;
     
-    // Find account where birthdayAge matches or is closest to requested age
+    // Find account where created date is closest to requested age
     let closest = accounts[0];
-    let minDiff = Math.abs(parseInt(accounts[0].birthdayAge) || 0 - requestedAge);
+    let minDiff = Math.abs(parseInt(accounts[0].created) || 0 - requestedAge);
     
     for (let account of accounts) {
-        const ageNum = parseInt(account.birthdayAge) || 0;
+        const ageNum = parseInt(account.created) || 0;
         const diff = Math.abs(ageNum - requestedAge);
         if (diff < minDiff) {
             minDiff = diff;
@@ -222,7 +222,7 @@ client.on('interactionCreate', async interaction => {
 
         const input = new TextInputBuilder()
             .setCustomId('requested_age')
-            .setLabel('Desired Account Age (e.g., 21)')
+            .setLabel('Desired Account Age in Days')
             .setPlaceholder('Leave blank for random')
             .setStyle(TextInputStyle.Short)
             .setRequired(false);
@@ -429,8 +429,8 @@ client.on('interactionCreate', async interaction => {
 
         const input = new TextInputBuilder()
             .setCustomId('requested_age')
-            .setLabel('Desired Account Age (e.g., 21)')
-            .setPlaceholder('Enter the account age')
+            .setLabel('Desired Account Age in Days')
+            .setPlaceholder('Enter the age in days')
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
@@ -484,7 +484,7 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Account Age', value: acc.birthdayAge || 'Unknown', inline: true },
                     { name: 'Created', value: formatCreatedDate(acc.created) || 'Unknown', inline: true }
                 )
-                .setFooter({ text: `Requested: ${requestedAge}+ (closest match: ${acc.birthdayAge})` });
+                .setFooter({ text: `Requested: ${requestedAge} days (closest match: ${formatCreatedDate(acc.created)})` });
 
             const row = new ActionRowBuilder()
                 .addComponents(
