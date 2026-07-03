@@ -34,8 +34,8 @@ setInterval(() => axios.get('https://rgen.onrender.com').catch(() => {}), 60000)
 const AccountSchema = new mongoose.Schema({
     username: String,
     password: String,
-    birthdayAge: String,
-    created: String,
+    birthdayAge: String, // e.g., "21+" - this is the account age
+    created: String, // e.g., "30d" - when the account was created
     used: { type: Boolean, default: false }
 });
 
@@ -115,6 +115,7 @@ async function getSpecificAccount(requestedAge, userId) {
     });
     if (accounts.length === 0) return null;
     
+    // Find account where birthdayAge matches or is closest to requested age
     let closest = accounts[0];
     let minDiff = Math.abs(parseInt(accounts[0].birthdayAge) || 0 - requestedAge);
     
@@ -221,7 +222,7 @@ client.on('interactionCreate', async interaction => {
 
         const input = new TextInputBuilder()
             .setCustomId('requested_age')
-            .setLabel('Desired Age in Days')
+            .setLabel('Desired Account Age (e.g., 21)')
             .setPlaceholder('Leave blank for random')
             .setStyle(TextInputStyle.Short)
             .setRequired(false);
@@ -428,8 +429,8 @@ client.on('interactionCreate', async interaction => {
 
         const input = new TextInputBuilder()
             .setCustomId('requested_age')
-            .setLabel('Desired Birthday Age (e.g., 21)')
-            .setPlaceholder('Enter the age requirement')
+            .setLabel('Desired Account Age (e.g., 21)')
+            .setPlaceholder('Enter the account age')
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
